@@ -50,9 +50,8 @@ test("desktop workflow reaches an analysis result", async ({ page }) => {
   await page.getByRole("button", { name: "开始连续识别" }).click();
 
   await expect(page.getByText("ANALYSIS COMPLETE")).toBeVisible({ timeout: 10_000 });
-  await expect(page.getByText("47%").first()).toBeVisible();
-  await expect(page.getByText("1.71").first()).toBeVisible();
-  await expect(page.getByText("+3.1").first()).toBeVisible();
+  await page.getByRole("button", { name: "当前洞察" }).click();
+  await expect(page.locator(".chat-answer").getByText(/1\.71.*持球引力/)).toBeVisible();
   await expect(page.getByText("1 条球员轨迹", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "身份" }).click();
   await page.getByLabel("确认轨迹 7 的球员身份").selectOption("d1");

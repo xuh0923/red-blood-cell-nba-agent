@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity, BadgeCheck, BarChart3, Check, ChevronRight, CircleDot, Cloud, Cpu, Database,
   FileJson, Film, Gauge, HardDriveUpload, Images, Info, LayoutDashboard, Link2,
-  LoaderCircle, Mic2, Play, Radio, RotateCcw, ShieldCheck, Sparkles, Upload, Users, Volume2, Wifi
+  Bot, LoaderCircle, MessageCircle, Mic2, Play, Radio, RotateCcw, Send, ShieldCheck, Sparkles, Upload, Users, Volume2, Wifi
 } from "lucide-react";
 import {
   metricDisplay,
@@ -99,6 +99,20 @@ function TrackingLayer({ players, ball }: {
   );
 }
 
+function CourtRadar({ players, ball }: { players: TrackedPlayer[]; ball?: TrackingResult["frames"][number]["ball"] }) {
+  return (
+    <section className="radar-panel" aria-label="球场雷达">
+      <div className="panel-title"><span><Activity size={15} />球场雷达</span><small>视野映射</small></div>
+      <div className="basketball-court">
+        <i className="court-center" /><i className="court-ring" /><i className="court-key court-key-left" /><i className="court-key court-key-right" />
+        {players.map((player) => <span key={player.trackId} className={`radar-player ${player.team} ${player.role}`} style={{ left: `${(player.box.x + player.box.width / 2) * 100}%`, top: `${(player.box.y + player.box.height / 2) * 100}%` }} title={player.playerName ?? player.label} />)}
+        {ball && <span className="radar-ball" style={{ left: `${(ball.box.x + ball.box.width / 2) * 100}%`, top: `${(ball.box.y + ball.box.height / 2) * 100}%` }} />}
+      </div>
+      <div className="radar-legend"><span><i className="team-a" />球队 A</span><span><i className="team-b" />球队 B</span><span><i className="ball" />篮球</span></div>
+    </section>
+  );
+}
+
 const trackingFrameAt = (tracking: TrackingResult | undefined, seconds: number) => {
   if (!tracking?.frames.length) return undefined;
   let low = 0;
@@ -133,6 +147,8 @@ export function App() {
   const [localJobId, setLocalJobId] = useState<string>();
   const [identitySavingTrack, setIdentitySavingTrack] = useState<number>();
   const [trackingTime, setTrackingTime] = useState(0);
+  const [agentQuestion, setAgentQuestion] = useState("");
+  const [agentReply, setAgentReply] = useState("我已加载当前回合的连续视觉轨迹与事件依据。你可以询问场上人数、跟踪稳定性或当前洞察。");
   const [mode, setMode] = useState<AnalysisMode>(cloudAvailable ? "cloud" : "local");
   const videoRef = useRef<HTMLVideoElement>(null);
   const trackingFrameTimeRef = useRef(-1);
@@ -271,7 +287,19 @@ export function App() {
   };
 
   const trackedFrame = trackingFrameAt(tracking, trackingTime);
+  const radarFrame = trackedFrame?.players.length ? trackedFrame : tracking?.frames.find((frame) => frame.players.length > 0);
   const roster = tracking?.roster;
+  const playerTracks = tracking?.tracks.filter((track) => track.role === "player") ?? [];
+  const teamATracks = playerTracks.filter((track) => track.team === "team-a");
+  const teamBTracks = playerTracks.filter((track) => track.team === "team-b");
+  const visiblePlayers = trackedFrame?.players.filter((player) => player.role === "player") ?? [];
+  const visibleTeamA = visiblePlayers.filter((player) => player.team === "team-a").length;
+  const visibleTeamB = visiblePlayers.filter((player) => player.team === "team-b").length;
+  const totalTeamTracks = teamATracks.length + teamBTracks.length;
+  const teamAShare = totalTeamTracks ? Math.round(teamATracks.length / totalTeamTracks * 100) : 50;
+  const averageConfidence = visiblePlayers.length ? Math.round(visiblePlayers.reduce((sum, player) => sum + player.confidence, 0) / visiblePlayers.length * 100) : 0;
+  const identifiedTracks = playerTracks.filter((track) => Boolean(track.playerName)).length;
+  const teamCodes = roster?.teamCodes ?? ["球队 A", "球队 B"];
 
   const speak = () => {
     const text = analysis?.narration.map((cue) => cue.text).join(" ");
@@ -292,6 +320,22 @@ export function App() {
       setError(cause instanceof Error ? cause.message : "无法保存身份确认");
     } finally {
       setIdentitySavingTrack(undefined);
+    }
+  };
+
+  const askAgent = (question?: string) => {
+    const prompt = (question ?? agentQuestion).trim();
+    if (!prompt) return;
+    setAgentQuestion("");
+    if (/人数|谁在场|球员/.test(prompt)) {
+      setAgentReply(`当前帧可见 ${visiblePlayers.length} 名球员，其中球队 A ${visibleTeamA} 人、球队 B ${visibleTeamB} 人；结果来自 ${tracking?.video.processedFps.toFixed(1) ?? "-"} FPS 连续跟踪。`);
+    } else if (/稳定|轨迹|跟踪/.test(prompt)) {
+      setAgentReply(`该片段保留 ${playerTracks.length} 条球员轨迹，当前画面平均检测置信度为 ${averageConfidence}%。遮挡或镜头变化可能产生轨迹片段，姓名确认仍需号码 OCR 或人工校验。`);
+    } else if (/洞察|指标|战术|回合/.test(prompt)) {
+      const event = activeEvent ?? analysis?.events[0];
+      setAgentReply(event ? `${event.title}：${event.explanation} 当前指标为 ${metricDisplay(event.metric)} ${event.metric.label}。` : "当前没有可用的结构化洞察事件。");
+    } else {
+      setAgentReply(`已收到“${prompt}”。当前本地问答仅基于已加载的轨迹与分析证据回答；正式部署后将由 AgentCore 补充比赛数据检索与战术解释。`);
     }
   };
 
@@ -391,17 +435,26 @@ export function App() {
                     {analysis.events.map((event) => <button key={event.id} className={`timeline-marker accent-${event.accent}`} style={{ left: `${Math.min(92, (event.startSeconds / 22) * 100)}%` }} onClick={() => seekTo(event)} title={event.title}><span /></button>)}
                   </div>
                 </div>
+                <div className="match-stats" aria-label="球队赛场统计">
+                  <div className="team-score"><small>比赛比分</small><strong>{screen === "showcase" ? "103" : "—"}<i>:</i>{screen === "showcase" ? "107" : "—"}</strong><span>{teamCodes[0]} <b>VS</b> {teamCodes[1]}</span></div>
+                  <div className="team-comparison"><div className="comparison-head"><span>{teamCodes[0]}</span><strong>轨迹分布</strong><span>{teamCodes[1]}</span></div><div className="comparison-row"><b>{teamATracks.length}</b><i><em style={{ width: `${teamAShare}%` }} /></i><b>{teamBTracks.length}</b></div><small>连续球员轨迹</small></div>
+                  <div className="possession-donut" style={{ background: `conic-gradient(var(--cyan) 0 ${teamAShare}%, var(--red) ${teamAShare}% 100%)` }}><div><strong>{teamAShare}%</strong><small>轨迹占比</small></div></div>
+                  <div className="stat-table"><span><small>当前可见</small><b>{visibleTeamA} : {visibleTeamB}</b></span><span><small>平均置信度</small><b>{averageConfidence}%</b></span><span><small>身份确认</small><b>{identifiedTracks}/{playerTracks.length}</b></span></div>
+                </div>
                 {frames.length > 0 && <div className="frame-strip"><div className="frame-strip-head"><span><Images size={14} />Agent 读取的关键帧</span><small>{frames.length} 帧</small></div><div>{frames.map((frame, index) => <button key={frame.previewUrl} onClick={() => { if (videoRef.current) videoRef.current.currentTime = frame.atSeconds; }}><img src={frame.previewUrl} alt={`关键帧 ${index + 1}`} /><span>{frame.atSeconds.toFixed(1)}s</span></button>)}</div></div>}
               </section>
 
-              <aside className="insight-column">
-                <div className="tabs">
-                  <button className={activeTab === "overview" ? "active" : ""} onClick={() => setActiveTab("overview")}>洞察</button>
+              <aside className="insight-column broadcast-aside">
+                <CourtRadar players={radarFrame?.players ?? []} ball={radarFrame?.ball} />
+                <section className="agent-panel">
+                <div className="agent-title"><span><Bot size={17} />赛场问答</span><i /><small>在线</small></div>
+                <div className="tabs agent-tabs">
+                  <button className={activeTab === "overview" ? "active" : ""} onClick={() => setActiveTab("overview")}>问答</button>
                   <button className={activeTab === "evidence" ? "active" : ""} onClick={() => setActiveTab("evidence")}>依据</button>
                   <button className={activeTab === "identity" ? "active" : ""} onClick={() => setActiveTab("identity")}>身份</button>
-                  <button className={activeTab === "device" ? "active" : ""} onClick={() => setActiveTab("device")}>解说设备</button>
+                  <button className={activeTab === "device" ? "active" : ""} onClick={() => setActiveTab("device")}>设备</button>
                 </div>
-                {activeTab === "overview" && <div className="event-list">{analysis.events.map((event, index) => <button key={event.id} className={activeEvent?.id === event.id ? "active" : ""} onClick={() => seekTo(event)}><span className={`event-index accent-${event.accent}`}>0{index + 1}</span><div><small>{event.startSeconds.toFixed(1)}s · {event.metric.label}</small><strong>{event.title}</strong><p>{event.explanation}</p></div><b>{metricDisplay(event.metric)}</b></button>)}</div>}
+                {activeTab === "overview" && <div className="chat-panel"><div className="chat-answer"><Bot size={15} /><p>{agentReply}</p></div><div className="quick-questions"><button onClick={() => askAgent("当前场上有多少球员？")}>当前谁在场？</button><button onClick={() => askAgent("轨迹跟踪稳定吗？")}>跟踪稳定吗？</button><button onClick={() => askAgent("当前洞察是什么？")}>当前洞察</button></div><form className="agent-input" onSubmit={(event) => { event.preventDefault(); askAgent(); }}><input aria-label="向赛场问答提问" value={agentQuestion} onChange={(event) => setAgentQuestion(event.target.value)} placeholder="问问这个回合..." /><button type="submit" title="发送问题"><Send size={15} /></button></form></div>}
                 {activeTab === "evidence" && <div className="evidence-list">{analysis.events.map((event) => <div key={event.id}><span><Database size={16} /></span><div><strong>{event.title}</strong><p>{event.evidence.join("；")}</p><small>{event.metric.source}</small></div></div>)}</div>}
                 {activeTab === "identity" && <div className="identity-review">
                   {roster ? <>
@@ -423,6 +476,7 @@ export function App() {
                   </> : <div className="identity-empty"><Users size={19} /><p>本次任务未上传比赛名单，无法提供可确认的球员候选。</p></div>}
                 </div>}
                 {activeTab === "device" && <div className="device-panel"><div className="device-visual"><span><Radio size={28} /></span><i>•ᴗ•</i></div><h3>外接解说机器人</h3><p>云端 WebSocket 通道已纳入协议设计。当前可用浏览器语音预听解说稿。</p><div className="device-stats"><span><b>{analysis.narration.length}</b> 条语音</span><span><b>Opus</b> 预留编码</span></div><button onClick={speak}><Volume2 size={17} />预听完整解说</button><small><Link2 size={13} /> ESP32 尚未连接</small></div>}
+                </section>
               </aside>
             </div>
             <div className="result-footer"><span><BadgeCheck size={16} />红细胞队 · Team28</span><span><Mic2 size={16} />{analysis.narration.length} 条解说提示</span><span><Database size={16} />{analysis.provenance.dataFile}</span>{tracking && <span><Activity size={16} />{tracking.tracks.filter((track) => track.role === "player").length} 条球员轨迹</span>}{tracking?.roster && <span><Users size={16} />{tracking.roster.playerCount} 人名单已加载</span>}<span><ShieldCheck size={16} />{screen === "showcase" ? "预生成展示作品" : tracking ? `本地视觉 · ${tracking.model.device.toUpperCase()}` : analysis.generatedBy === "local-rules" ? "本地验证结果" : "AgentCore 多模态结果"}</span></div>
