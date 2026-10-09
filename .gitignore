@@ -11,6 +11,7 @@ cdk.out/
 .env.*
 !.env.example
 tmp/
+apps/web/public/showcase/
 output/
 .local-data/
 .venv/

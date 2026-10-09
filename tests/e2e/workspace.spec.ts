@@ -34,7 +34,7 @@ test("desktop workflow reaches an analysis result", async ({ page }) => {
     } });
   });
   await page.setViewportSize({ width: 1440, height: 1000 });
-  await page.goto("/");
+  await page.goto("/?workspace=1");
   await expect(page.getByRole("heading", { name: "把一个回合，讲得明白。" })).toBeVisible();
 
   await page.getByLabel("比赛视频").setInputFiles({
@@ -63,7 +63,7 @@ test("desktop workflow reaches an analysis result", async ({ page }) => {
 });
 
 test("roster upload is available without blocking local tracking", async ({ page }) => {
-  await page.goto("/");
+  await page.goto("/?workspace=1");
   await page.getByLabel("比赛名单 JSON").setInputFiles({
     name: "game-roster.json",
     mimeType: "application/json",
@@ -82,9 +82,32 @@ test("roster upload is available without blocking local tracking", async ({ page
 
 test("mobile workspace has no horizontal overflow", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto("/");
+  await page.goto("/?workspace=1");
   await expect(page.getByRole("heading", { name: "把一个回合，讲得明白。" })).toBeVisible();
   await expect(page.getByText("分析工作台").last()).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await page.screenshot({ path: "tmp/home-mobile.png", fullPage: true });
+});
+
+test("review link opens a pre-generated Team28 work without an upload prompt", async ({ page }) => {
+  const tracking = {
+    version: "1.0",
+    video: { width: 1920, height: 1080, durationSeconds: 2, sourceFps: 60, processedFps: 10 },
+    model: { name: "test-model", device: "cpu", imageSize: 640 },
+    frames: [], tracks: [], warnings: []
+  };
+  const analysis = {
+    version: "1.0", generatedBy: "local-rules", summary: "预生成结果", warnings: [],
+    provenance: { videoFile: "featured.mp4", dataFile: "metrics.json" }, events: [], narration: []
+  };
+  await page.route("**/showcase/manifest.json", async (route) => {
+    await route.fulfill({ json: { version: "1.0", teamId: "Team28", title: "预生成作品", videoUrl: "featured.mp4", analysisUrl: "analysis.json", trackingUrl: "tracking.json" } });
+  });
+  await page.route("**/showcase/analysis.json", async (route) => { await route.fulfill({ json: analysis }); });
+  await page.route("**/showcase/tracking.json", async (route) => { await route.fulfill({ json: tracking }); });
+  await page.goto("/");
+  await expect(page.getByText("TEAM28 · REVIEW RESULT")).toBeVisible();
+  await expect(page.getByText("红细胞队 · Team28", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("比赛视频")).toHaveCount(0);
+  await expect(page.getByRole("main").getByRole("button", { name: "新建分析" })).toBeVisible();
 });

@@ -1,0 +1,39 @@
+{
+  "version": "1.0",
+  "generatedBy": "local-rules",
+  "summary": "预生成的连续视觉展示作品。画面中的球员框与轨迹来自本地视觉任务；指标字段仅用于演示界面，正式提交前必须替换为该视频对应的赛事深度数据和 AgentCore 分析结果。",
+  "provenance": {
+    "videoFile": "featured-game.mp4",
+    "dataFile": "showcase-analysis.example.json"
+  },
+  "warnings": [
+    "该示例分析文件只用于准备本地展示产物，不能作为正式赛事结论。"
+  ],
+  "events": [
+    {
+      "id": "tracking-proof",
+      "startSeconds": 2.4,
+      "endSeconds": 6.8,
+      "title": "连续轨迹展示",
+      "explanation": "播放器按时间轴读取预生成轨迹结果，不会在评委打开页面后重新运行识别任务。",
+      "metric": {
+        "kind": "on_ball_gravity",
+        "value": 1.0,
+        "unit": "index",
+        "label": "视觉追踪",
+        "source": "本地视觉任务"
+      },
+      "anchor": "top-left",
+      "accent": "cyan",
+      "evidence": ["tracking.json", "预生成展示清单"]
+    }
+  ],
+  "narration": [
+    {
+      "id": "showcase-n1",
+      "startSeconds": 2.4,
+      "emotion": "focused",
+      "text": "这是预生成的连续视觉跟踪结果。"
+    }
+  ]
+}

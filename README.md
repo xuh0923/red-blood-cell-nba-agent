@@ -15,6 +15,7 @@
 - 生成安全、确定性的 ffmpeg filter script
 - CDK 定义 S3、CloudFront、API Gateway、Lambda、DynamoDB 和 Step Functions
 - 已部署 Bedrock AgentCore 多模态 Agent，并为 ESP32 解说机器人预留明确接入边界
+- 根路径为 Team28 的预生成评审展示页；上传流程仅在“新建分析”工作台中触发
 
 ## 快速开始
 
@@ -28,6 +29,8 @@ npm run dev
 ```
 
 打开 `http://127.0.0.1:5173`。`npm run dev` 会同时启动 Web 和本地视觉服务；首次识别会下载约 6 MB 的检测模型。页面中可直接选择训练视频，数据文件不是必需的。
+
+评审展示页读取预生成的作品产物，不会在页面打开后才开始分析。工作台入口为右上角“新建分析”，也可以直接打开 `http://127.0.0.1:5173/?workspace=1`。准备最终展示产物的方法见 [docs/showcase-publishing.md](docs/showcase-publishing.md)。
 
 本地视觉结果保存在 `.local-data/jobs/{jobId}`。未确认球员身份时只显示轨迹编号，不会猜测姓名；后续通过比赛名单、号码 OCR 和场上阵容逐步确认。名单格式和可直接复制的模板见 [docs/roster-database-format.md](docs/roster-database-format.md)。
 

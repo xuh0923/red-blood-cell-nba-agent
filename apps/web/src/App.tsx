@@ -16,9 +16,11 @@ import { createDemoAnalysis, parseDataFile, workflowSteps } from "./demo-workflo
 import { cloudAvailable, runCloudWorkflow } from "./cloud-workflow";
 import { extractVideoFrames, releaseFrames, type ExtractedFrame } from "./video-frames";
 import { runLocalVisionWorkflow, updateLocalTrackIdentity } from "./local-workflow";
+import { loadShowcase, type ShowcaseArtifact } from "./showcase";
 
 type Tab = "overview" | "evidence" | "identity" | "device";
 type AnalysisMode = "local" | "cloud";
+type Screen = "showcase" | "workspace";
 
 const statusLabels: Record<JobStatus, string> = {
   draft: "等待输入", uploading: "校验输入", queued: "等待处理", extracting_frames: "读取视频帧",
@@ -112,6 +114,9 @@ const trackingFrameAt = (tracking: TrackingResult | undefined, seconds: number) 
 };
 
 export function App() {
+  const [screen, setScreen] = useState<Screen>(() => new URLSearchParams(window.location.search).get("workspace") === "1" ? "workspace" : "showcase");
+  const [showcase, setShowcase] = useState<ShowcaseArtifact>();
+  const [showcaseError, setShowcaseError] = useState<string>();
   const [videoFile, setVideoFile] = useState<File>();
   const [dataFile, setDataFile] = useState<File>();
   const [rosterFile, setRosterFile] = useState<File>();
@@ -134,13 +139,31 @@ export function App() {
 
   useEffect(() => {
     if (!videoFile) {
-      setVideoUrl(undefined);
+      if (!showcase) setVideoUrl(undefined);
       return;
     }
     const url = URL.createObjectURL(videoFile);
     setVideoUrl(url);
     return () => URL.revokeObjectURL(url);
-  }, [videoFile]);
+  }, [videoFile, showcase]);
+
+  useEffect(() => {
+    if (screen !== "showcase" || showcase) return;
+    let cancelled = false;
+    void loadShowcase().then((artifact) => {
+      if (cancelled) return;
+      setShowcase(artifact);
+      setVideoUrl(artifact.videoUrl);
+      setAnalysis(artifact.analysis);
+      setTracking(artifact.tracking);
+      setActiveEvent(artifact.analysis.events[0]);
+      setStatus("completed");
+      setProgress(100);
+    }).catch((cause) => {
+      if (!cancelled) setShowcaseError(cause instanceof Error ? cause.message : "展示作品暂时不可用");
+    });
+    return () => { cancelled = true; };
+  }, [screen, showcase]);
 
   useEffect(() => () => releaseFrames(frames), [frames]);
 
@@ -169,10 +192,26 @@ export function App() {
 
   const completed = status === "completed" && analysis;
   const currentStep = workflowSteps.findIndex((step) => step.status === status);
-  const jobName = useMemo(() => videoFile?.name.replace(/\.[^.]+$/, "") ?? "未命名回合", [videoFile]);
+  const jobName = useMemo(() => showcase?.title ?? videoFile?.name.replace(/\.[^.]+$/, "") ?? "未命名回合", [showcase, videoFile]);
 
   const reset = () => {
     setStatus("draft"); setProgress(0); setAnalysis(undefined); setError(undefined); setActiveEvent(undefined); setFrames([]); setTracking(undefined); setTrackingTime(0); setLocalJobId(undefined); setIdentitySavingTrack(undefined);
+  };
+
+  const openWorkspace = () => {
+    reset();
+    setVideoFile(undefined); setShowcase(undefined); setVideoUrl(undefined);
+    setShowcaseError(undefined);
+    setScreen("workspace");
+    window.history.pushState({}, "", `${window.location.pathname}?workspace=1`);
+  };
+
+  const openShowcase = () => {
+    reset();
+    setVideoFile(undefined); setShowcase(undefined); setVideoUrl(undefined);
+    setShowcaseError(undefined);
+    setScreen("showcase");
+    window.history.pushState({}, "", window.location.pathname);
   };
 
   const run = async () => {
@@ -261,25 +300,31 @@ export function App() {
       <aside className="sidebar">
         <div className="brand"><span className="brand-mark"><Activity size={20} /></span><span>CourtVision<small>AGENT</small></span></div>
         <nav>
-          <button className="nav-item active"><LayoutDashboard size={18} /><span>分析工作台</span></button>
-          <button className="nav-item" disabled><Film size={18} /><span>作品库</span><small>稍后</small></button>
+          <button className={`nav-item ${screen === "showcase" ? "active" : ""}`} onClick={openShowcase}><Film size={18} /><span>作品展示</span></button>
+          <button className={`nav-item ${screen === "workspace" ? "active" : ""}`} onClick={openWorkspace}><LayoutDashboard size={18} /><span>新建分析</span></button>
           <button className="nav-item" disabled><Radio size={18} /><span>设备中心</span><small>预留</small></button>
         </nav>
         <div className="sidebar-spacer" />
         <div className="cloud-state"><Cloud size={16} /><div><strong>{mode === "cloud" ? "AWS 托管模式" : "本地视觉模式"}</strong><small>{mode === "cloud" ? "AgentCore 已连接" : "连续检测与跟踪"}</small></div><span /></div>
-        <div className="team-label">红细胞队 · NBA x AWS</div>
+        <div className="team-label">红细胞队 · Team28 · NBA x AWS</div>
       </aside>
 
       <main>
         <header className="topbar">
-          <div><p>分析工作台</p><h1>{completed ? jobName : "创建比赛解读"}</h1></div>
+          <div><p>{screen === "showcase" ? "TEAM28 · PREGENERATED SHOWCASE" : "分析工作台"}</p><h1>{completed ? jobName : "创建比赛解读"}</h1></div>
           <div className="top-actions">
             <span className="region"><span /> us-east-1</span>
-            {completed && <button className="icon-button" onClick={reset} title="新建分析"><RotateCcw size={18} /></button>}
+            {screen === "showcase" ? <button className="new-analysis-button" onClick={openWorkspace}><Sparkles size={15} />新建分析</button> : completed && <button className="icon-button" onClick={openWorkspace} title="新建分析"><RotateCcw size={18} /></button>}
           </div>
         </header>
 
-        {!completed ? (
+        {screen === "showcase" && !completed ? (
+          <div className="showcase-loading">
+            <span className="eyebrow"><Activity size={14} /> TEAM28 · REVIEW READY</span>
+            <h2>正在载入预生成作品</h2>
+            {showcaseError ? <><p>{showcaseError}</p><button className="primary-button" onClick={openWorkspace}><Sparkles size={18} />进入分析工作台</button></> : <p>视频、轨迹与分析结果均为预生成产物，打开页面不会触发新任务。</p>}
+          </div>
+        ) : !completed ? (
           <div className="workspace create-view">
             <section className="intro-row">
               <div><span className="eyebrow"><Sparkles size={14} /> NEW ANALYSIS</span><h2>把一个回合，讲得明白。</h2><p>上传比赛片段与对应深度数据，系统会生成可核验的指标解读、时间轴和画面叠加方案。</p></div>
@@ -330,7 +375,7 @@ export function App() {
           </div>
         ) : (
           <div className="workspace result-view">
-            <div className="result-status"><span><Check size={14} /> ANALYSIS COMPLETE</span><p>{analysis.summary}</p></div>
+            <div className="result-status"><span><Check size={14} /> {screen === "showcase" ? "TEAM28 · REVIEW RESULT" : "ANALYSIS COMPLETE"}</span><p>{analysis.summary}</p></div>
             <div className="result-grid">
               <section className="video-column">
                 <div className={`video-stage ${tracking ? "has-tracking" : ""}`}>
@@ -380,7 +425,7 @@ export function App() {
                 {activeTab === "device" && <div className="device-panel"><div className="device-visual"><span><Radio size={28} /></span><i>•ᴗ•</i></div><h3>外接解说机器人</h3><p>云端 WebSocket 通道已纳入协议设计。当前可用浏览器语音预听解说稿。</p><div className="device-stats"><span><b>{analysis.narration.length}</b> 条语音</span><span><b>Opus</b> 预留编码</span></div><button onClick={speak}><Volume2 size={17} />预听完整解说</button><small><Link2 size={13} /> ESP32 尚未连接</small></div>}
               </aside>
             </div>
-            <div className="result-footer"><span><Mic2 size={16} />{analysis.narration.length} 条解说提示</span><span><Database size={16} />{analysis.provenance.dataFile}</span>{tracking && <span><Activity size={16} />{tracking.tracks.filter((track) => track.role === "player").length} 条球员轨迹</span>}{tracking?.roster && <span><Users size={16} />{tracking.roster.playerCount} 人名单已加载</span>}<span><ShieldCheck size={16} />{tracking ? `本地视觉 · ${tracking.model.device.toUpperCase()}` : analysis.generatedBy === "local-rules" ? "本地验证结果" : "AgentCore 多模态结果"}</span></div>
+            <div className="result-footer"><span><BadgeCheck size={16} />红细胞队 · Team28</span><span><Mic2 size={16} />{analysis.narration.length} 条解说提示</span><span><Database size={16} />{analysis.provenance.dataFile}</span>{tracking && <span><Activity size={16} />{tracking.tracks.filter((track) => track.role === "player").length} 条球员轨迹</span>}{tracking?.roster && <span><Users size={16} />{tracking.roster.playerCount} 人名单已加载</span>}<span><ShieldCheck size={16} />{screen === "showcase" ? "预生成展示作品" : tracking ? `本地视觉 · ${tracking.model.device.toUpperCase()}` : analysis.generatedBy === "local-rules" ? "本地验证结果" : "AgentCore 多模态结果"}</span></div>
           </div>
         )}
       </main>
