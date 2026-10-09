@@ -1,0 +1,32 @@
+{
+  "version": "1.0",
+  "gameId": "2026-example-dal-hou",
+  "teams": [
+    {
+      "teamCode": "DAL",
+      "teamName": "Dallas Mavericks",
+      "players": [
+        {
+          "playerId": "dal-example-7",
+          "name": "Player Name",
+          "jerseyNumber": "7",
+          "aliases": ["P. Name"],
+          "activeIntervals": [{ "startSeconds": 0, "endSeconds": 720 }]
+        }
+      ]
+    },
+    {
+      "teamCode": "HOU",
+      "teamName": "Houston Rockets",
+      "players": [
+        {
+          "playerId": "hou-example-1",
+          "name": "Player Name",
+          "jerseyNumber": "1",
+          "aliases": [],
+          "activeIntervals": [{ "startSeconds": 0, "endSeconds": 720 }]
+        }
+      ]
+    }
+  ]
+}

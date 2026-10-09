@@ -1,0 +1,33 @@
+{
+  "name": "courtvision-agent",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*",
+    "services/*",
+    "infra"
+  ],
+  "scripts": {
+    "dev": "concurrently --kill-others --names vision,web --prefix-colors cyan,green \"npm run dev:vision\" \"npm run dev:web\"",
+    "dev:web": "npm run dev -w @courtvision/web",
+    "dev:vision": "node scripts/run-vision.mjs",
+    "build": "npm run build -w @courtvision/contracts && npm run build -w @courtvision/agent && npm run build -w @courtvision/agentcore-runtime && npm run build -w @courtvision/renderer && npm run build -w @courtvision/api && npm run build -w @courtvision/web && npm run build -w @courtvision/infra",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "playwright test",
+    "cdk:synth": "npm run synth -w @courtvision/infra",
+    "cdk:deploy": "npm run deploy -w @courtvision/infra --"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.63.0",
+    "@types/node": "^24.7.2",
+    "concurrently": "^10.0.6",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.11"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

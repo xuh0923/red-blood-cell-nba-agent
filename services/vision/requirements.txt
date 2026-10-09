@@ -1,0 +1,6 @@
+fastapi>=0.115,<1
+lap>=0.5.12,<1
+opencv-python>=4.10,<6
+python-multipart>=0.0.20,<1
+ultralytics>=8.4,<9
+uvicorn[standard]>=0.34,<1
