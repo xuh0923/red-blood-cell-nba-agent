@@ -5,8 +5,8 @@
   "workspaces": [
     "apps/*",
     "packages/*",
-    "services/agent",
-    "services/renderer"
+    "services/*",
+    "infra"
   ],
   "scripts": {
     "dev": "concurrently --kill-others --names vision,web --prefix-colors cyan,green \"npm run dev:vision\" \"npm run dev:web\"",
@@ -15,6 +15,8 @@
     "showcase:prepare": "node scripts/prepare-showcase.mjs",
     "build": "npm run build -w @courtvision/contracts && npm run build -w @courtvision/agent && npm run build -w @courtvision/renderer && npm run build -w @courtvision/web",
     "build:showcase": "npm run showcase:prepare && npm run build",
+    "synth": "npm run synth -w @courtvision/infra",
+    "deploy": "npm run build && npm run deploy -w @courtvision/infra -- --profile nba",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "test": "vitest run",
     "test:watch": "vitest",

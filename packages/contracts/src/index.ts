@@ -356,6 +356,9 @@ export const jobSchema = z.object({
   tracking: trackingResultSchema.optional(),
   trackingKey: z.string().min(1).optional(),
   visionProvider: z.enum(["rekognition-video", "sagemaker", "local"]).optional(),
+  mediaJobId: z.string().min(1).optional(),
+  mediaStatus: z.enum(["queued", "processing", "complete", "error"]).optional(),
+  playbackKey: z.string().min(1).optional(),
   stats: gameStatsTimelineSchema.optional(),
   error: z.string().optional()
 });

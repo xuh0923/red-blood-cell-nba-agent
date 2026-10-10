@@ -1,30 +1,28 @@
-# 本地系统架构
+# 混合系统架构
 
 ## 目标
 
-系统在一台开发机上完成“视频 + 比赛资料 -> 连续视觉跟踪 -> 可视化分析结果”的闭环。浏览器负责素材选择、结果展示和交互；本地 FastAPI 服务负责视频任务和视觉推理；TypeScript 规则分析器负责从已加载资料生成可追溯事件。
+系统保留可独立运行的本地精确识别，同时用少量 AWS 托管服务承担大文件存储、线上视觉基线、播放转码与公开分发。AgentCore 不在视频主链路中，避免模型网络等待阻塞上传和识别。
 
 ## 数据流
 
 ```text
-浏览器
-  | multipart 视频 / JSON / CSV
-  v
-本地视觉服务 :8787
-  | YOLO + BoT-SORT + OCR
-  v
-.local-data/jobs/{jobId}
-  | tracking.json + job.json
-  v
-浏览器同步视频时间、球员框、篮球、雷达和统计面板
-  |
-  +--> 本地规则分析器：资料字段 -> 结构化事件 / 解说 / 证据
+浏览器 --4 路分片直传--> S3 原始视频与资料
+  |                         |
+  |                         +--> Rekognition Video -> tracking.json
+  |                         +--> MediaConvert -> fast-start 1080p MP4
+  |                         +--> CloudFront -> 清晰、可拖动的公开播放
+  +--> API Gateway/Lambda -> DynamoDB 任务状态
+
+本地模式：浏览器 -> FastAPI -> YOLO + BoT-SORT + OCR -> .local-data
 ```
 
 ## 模块边界
 
 - `apps/web`：React 操作台、视频播放、跟踪叠加、球场雷达、统计、问答和身份确认。
 - `services/vision`：FastAPI 本地任务服务，执行 YOLO 检测、BoT-SORT 跟踪、球衣特征、可选 OCR 和结果持久化。
+- `services/api`：生成 S3 预签名分片、启动 Rekognition/MediaConvert、维护任务状态。
+- `infra`：用 CDK 声明 S3、CloudFront、DynamoDB、Lambda、Step Functions 与事件回调。
 - `services/agent`：无网络的确定性分析器，只读取用户上传的结构化资料，不推断缺失指标。
 - `packages/contracts`：跨模块共享的 Zod 契约和类型。
 - `services/renderer`：生成安全的 ffmpeg 可视化脚本参数。
@@ -46,6 +44,14 @@
 
 `apps/web/public/showcase` 包含可提交的本地展示产物：视频、分析 JSON、跟踪 JSON、统计 JSON 和 manifest。根路径只读取这些静态文件，不启动识别、不访问网络服务；`scripts/prepare-showcase.mjs` 可从本地完成任务重新生成它们。
 
-## 已移除的边界
+## AWS 使用边界
 
-当前版本不包含 AWS SDK、CDK、S3、DynamoDB、CloudFront、API Gateway、Step Functions、Bedrock/AgentCore、云端轮询或外接设备模块。若未来重新引入远端能力，应在独立适配层中实现，并保证本地路径可独立运行。
+S3 保存原视频、深度数据、关键帧、轨迹、分析结果和播放版；DynamoDB 不保存大 JSON。Rekognition 是通用云端基线，不能可靠命名 NBA 球员；具体姓名仍需球衣号码、多帧投票和名单约束。进攻路线必须先做球场线检测、单应性标定和相机运动补偿，未标定时不把画面坐标伪装成球场坐标。AgentCore 资源暂时保留兼容性，但不进入上传、识别、转码主流程。外接设备模块继续禁止。
+
+## 2026-10-10：最小 AWS 托管链路
+
+- 恢复浏览器到 S3 的 Multipart Upload，超过 16 MiB 使用 8 MiB 分片和 4 路并发。
+- Step Functions 只编排 Rekognition 连续视觉、确定性资料分析和 MediaConvert，不再等待 AgentCore。
+- MediaConvert 输出 fast-start 1080p H.264/AAC MP4，CloudFront 通过私有 S3 OAC 分发 `media/*`。
+- EventBridge 在转码完成后更新 DynamoDB，公开页面只播放已完成媒体，不边分析边卡住播放器。
+- 原视频以 SHA-256 命名去重；深度数据、训练视频和结果长期保留，仅自动清理未完成分片。

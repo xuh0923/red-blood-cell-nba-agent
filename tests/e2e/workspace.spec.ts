@@ -36,6 +36,7 @@ test("desktop workflow reaches an analysis result", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.goto("/?workspace=1");
   await expect(page.getByRole("heading", { name: "把一个回合，讲得明白。" })).toBeVisible();
+  await page.getByRole("button", { name: "本地精确识别" }).click();
 
   await page.getByLabel("比赛视频").setInputFiles({
     name: "training-clip.mp4",
