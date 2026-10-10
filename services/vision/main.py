@@ -26,6 +26,15 @@ MODEL_NAME = os.getenv("COURTVISION_VISION_MODEL", "yolo11n.pt")
 TARGET_FPS = max(1.0, float(os.getenv("COURTVISION_TRACKING_FPS", "10")))
 MODEL_SIZE = max(320, int(os.getenv("COURTVISION_MODEL_SIZE", "640")))
 DEVICE = "cuda:0" if torch.cuda.is_available() else "cpu"
+PLAYER_MIN_CONFIDENCE = max(0.05, min(0.95, float(os.getenv("COURTVISION_PLAYER_MIN_CONFIDENCE", "0.35"))))
+BALL_MIN_CONFIDENCE = max(0.05, min(0.95, float(os.getenv("COURTVISION_BALL_MIN_CONFIDENCE", "0.30"))))
+SCOREBOARD_INTERVAL_SECONDS = max(1.0, float(os.getenv("COURTVISION_SCOREBOARD_INTERVAL_SECONDS", "3")))
+PLAYER_CLASS_ID = int(os.getenv("COURTVISION_PLAYER_CLASS_ID", "0"))
+BALL_CLASS_ID = int(os.getenv("COURTVISION_BALL_CLASS_ID", "32"))
+DETECTOR_CLASSES = tuple(
+    int(value.strip()) for value in os.getenv("COURTVISION_DETECTOR_CLASSES", "0,32").split(",")
+    if value.strip().isdigit()
+) or (0, 32)
 TRACKER_CONFIG = Path(__file__).with_name("courtvision_botsort.yaml")
 TESSERACT_PATH = os.getenv("COURTVISION_TESSERACT_PATH") or shutil.which("tesseract")
 
@@ -161,6 +170,29 @@ def ocr_jersey_number(crop: np.ndarray) -> str | None:
     return matched.group(0) if matched else None
 
 
+def ocr_scoreboard_text(frame: np.ndarray) -> str | None:
+    """Read the broadcast score bug as evidence; it is never treated as verified game data."""
+    if not TESSERACT_PATH or frame.size == 0:
+        return None
+    height, width = frame.shape[:2]
+    crop = frame[: max(1, int(height * 0.24)), :]
+    gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+    gray = cv2.resize(gray, None, fx=2.5, fy=2.5, interpolation=cv2.INTER_CUBIC)
+    gray = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8)).apply(gray)
+    ok, encoded = cv2.imencode(".png", gray)
+    if not ok:
+        return None
+    try:
+        result = subprocess.run(
+            [str(TESSERACT_PATH), "stdin", "stdout", "--psm", "6"],
+            input=encoded.tobytes(), capture_output=True, timeout=3, check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    text = re.sub(r"\s+", " ", result.stdout.decode("utf-8", errors="ignore")).strip()
+    return text[:240] if len(text) >= 2 else None
+
+
 def vote_jersey_numbers(crops: dict[int, list[np.ndarray]]) -> dict[int, tuple[str, float]]:
     """A number is usable only after several independent reads agree."""
     outcomes: dict[int, tuple[str, float]] = {}
@@ -214,6 +246,8 @@ def parse_roster(path: Path | None) -> dict[str, Any] | None:
         raw = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
         raise ValueError("名单文件必须是 UTF-8 编码的合法 JSON") from error
+    if isinstance(raw, dict) and isinstance(raw.get("roster"), dict):
+        raw = raw["roster"]
     if not isinstance(raw, dict) or raw.get("version") != "1.0":
         raise ValueError("名单文件缺少 version: 1.0")
     game_id = raw.get("gameId")
@@ -302,10 +336,12 @@ def process_job(job_id: str, video_path: Path, roster_path: Path | None = None) 
         model = get_model()
         write_job(job_id, {"status": "analyzing", "progress": 20})
         frames: list[dict[str, Any]] = []
+        video_evidence: list[dict[str, Any]] = []
         track_colors: dict[int, list[list[float]]] = {}
         track_number_crops: dict[int, list[np.ndarray]] = {}
         frame_index = 0
         processed = 0
+        last_scoreboard_seconds = -SCOREBOARD_INTERVAL_SECONDS
 
         while True:
             ok, frame = capture.read()
@@ -315,13 +351,25 @@ def process_job(job_id: str, video_path: Path, roster_path: Path | None = None) 
                 frame_index += 1
                 continue
             analysis_frame = frame.copy()
+            current_seconds = frame_index / source_fps
+            if current_seconds - last_scoreboard_seconds >= SCOREBOARD_INTERVAL_SECONDS:
+                scoreboard_text = ocr_scoreboard_text(frame)
+                if scoreboard_text:
+                    video_evidence.append({
+                        "type": "scoreboard",
+                        "value": scoreboard_text,
+                        "atSeconds": round(frame_index / source_fps, 3),
+                        "confidence": round(0.55 if re.search(r"\d", scoreboard_text) else 0.35, 3),
+                        "source": "local-tesseract-scoreboard",
+                    })
+                last_scoreboard_seconds = current_seconds
             analysis_frame[: int(height * 0.22), :] = 0
             analysis_frame[int(height * 0.91) :, :] = 0
             result = model.track(
                 analysis_frame,
                 persist=True,
                 tracker=str(TRACKER_CONFIG),
-                classes=[0, 32],
+                classes=list(DETECTOR_CLASSES),
                 conf=0.24,
                 iou=0.5,
                 imgsz=MODEL_SIZE,
@@ -343,7 +391,7 @@ def process_job(job_id: str, video_path: Path, roster_path: Path | None = None) 
                         "width": max(0.0, min(1.0, (x2 - x1) / width)),
                         "height": max(0.0, min(1.0, (y2 - y1) / height)),
                     }
-                    if class_id == 0 and track_id >= 0 and is_court_person(normalized):
+                    if class_id == PLAYER_CLASS_ID and track_id >= 0 and float(score) >= PLAYER_MIN_CONFIDENCE and is_court_person(normalized):
                         player = {
                             "trackId": int(track_id),
                             "label": f"球员 {int(track_id):02d}",
@@ -362,7 +410,7 @@ def process_job(job_id: str, video_path: Path, roster_path: Path | None = None) 
                         samples = track_number_crops.setdefault(int(track_id), [])
                         if crop is not None and len(samples) < 8:
                             samples.append(crop)
-                    elif class_id == 32:
+                    elif class_id == BALL_CLASS_ID and float(score) >= BALL_MIN_CONFIDENCE:
                         candidate = {"confidence": round(float(score), 4), "box": normalized}
                         if ball is None or candidate["confidence"] > ball["confidence"]:
                             ball = candidate
@@ -482,12 +530,26 @@ def process_job(job_id: str, video_path: Path, roster_path: Path | None = None) 
                 "processedFps": round(source_fps / stride, 3),
             },
             "model": {"name": MODEL_NAME, "device": DEVICE, "imageSize": MODEL_SIZE},
+            "quality": {
+                "frameCoverage": round(sum(1 for frame in frames if frame["players"]) / max(1, len(frames)), 4),
+                "ballFrameCoverage": round(sum(1 for frame in frames if frame.get("ball")) / max(1, len(frames)), 4),
+                "meanPlayerConfidence": round(
+                    sum(player["confidence"] for frame in frames for player in frame["players"])
+                    / max(1, sum(len(frame["players"]) for frame in frames)),
+                    4,
+                ),
+                "trackCount": len(player_tracks),
+            },
+            "videoEvidence": video_evidence[:160],
             "frames": frames,
             "tracks": sorted(tracks.values(), key=lambda item: item["trackId"]),
             **({"roster": roster_summary} if roster_summary else {}),
             "warnings": [
                 "球员姓名尚未确认时显示轨迹编号。",
-                "球队颜色为无监督聚类结果，需要结合比赛名单和球衣号码校验。",
+                "球队颜色为无监督候选结果，需要结合比赛名单和球衣号码校验。",
+                *(["当前使用 COCO 通用检测模型，不能据此证明球员身份或球权。"] if MODEL_NAME.lower().endswith(("yolo11n.pt", "yolo11n")) else []),
+                *(["球员轨迹数量明显高于篮球场上人数，可能存在 ID 切换或场边误检；请在质量面板复核。"] if len(player_tracks) > 20 else []),
+                *(["篮球有效帧覆盖率低于 20%，不会把最近一次篮球位置当作当前帧。"] if sum(1 for frame in frames if frame.get("ball")) / max(1, len(frames)) < 0.2 else []),
                 *(["未检测到本地 Tesseract，号码 OCR 已跳过；可通过人工身份校验确认轨迹。"] if not TESSERACT_PATH else []),
                 *([f"号码 OCR 已确认 {len(identity_by_track)} 条唯一名单轨迹。"] if identity_by_track else []),
                 *([f"检测到 {len(referee_tracks)} 条裁判候选轨迹，未参与球队和姓名匹配。"] if referee_tracks else []),
@@ -519,6 +581,11 @@ def health() -> dict[str, Any]:
         "device": DEVICE,
         "model": MODEL_NAME,
         "trackingFps": TARGET_FPS,
+        "detectorClasses": list(DETECTOR_CLASSES),
+        "playerClassId": PLAYER_CLASS_ID,
+        "ballClassId": BALL_CLASS_ID,
+        "playerMinConfidence": PLAYER_MIN_CONFIDENCE,
+        "ballMinConfidence": BALL_MIN_CONFIDENCE,
         "dataRoot": str(DATA_ROOT),
     }
 
@@ -541,9 +608,11 @@ async def create_job(
     with video_path.open("wb") as target:
         shutil.copyfileobj(video.file, target)
     data_name = None
+    data_path = None
     if data is not None:
         data_name = safe_name(data.filename, "data.json")
-        with (input_directory / data_name).open("wb") as target:
+        data_path = input_directory / data_name
+        with data_path.open("wb") as target:
             shutil.copyfileobj(data.file, target)
     roster_name = None
     roster_path = None
@@ -558,6 +627,13 @@ async def create_job(
             parse_roster(roster_path)
         except ValueError as error:
             raise HTTPException(status_code=422, detail=str(error)) from error
+    elif data_path is not None and data_path.suffix.lower() == ".json":
+        try:
+            parse_roster(data_path)
+            roster_path = data_path
+            roster_name = data_name
+        except ValueError:
+            pass
     timestamp = utc_now()
     job = {
         "id": job_id,

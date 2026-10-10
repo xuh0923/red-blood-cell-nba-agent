@@ -1,67 +1,51 @@
-# CourtVision 系统架构
+# 本地系统架构
 
-## 产品闭环
+## 目标
 
-用户在 Web 工作台上传比赛视频与深度赛场数据。系统创建任务、保存输入、让 Agent 结合数据和关键帧生成结构化分析，再按时间轴把指标、解释和解说渲染到视频。结果通过 CloudFront 访问，也可以向 ESP32 解说设备发送语音与表情事件。
+系统在一台开发机上完成“视频 + 比赛资料 -> 连续视觉跟踪 -> 可视化分析结果”的闭环。浏览器负责素材选择、结果展示和交互；本地 FastAPI 服务负责视频任务和视觉推理；TypeScript 规则分析器负责从已加载资料生成可追溯事件。
+
+## 数据流
 
 ```text
-浏览器 / CloudFront
-        |
-        v
-API Gateway -> Lambda API -> DynamoDB
-        |                任务状态
-        v
-S3 input -> Step Functions
-              |-- 关键帧提取
-              |-- Bedrock AgentCore -> Bedrock 模型
-              |-- Polly 解说音频
-              |-- ECS/Fargate + ffmpeg 渲染
-              `-- S3 output -> CloudFront
-                                      |
-                                      `-- WebSocket -> ESP32
+浏览器
+  | multipart 视频 / JSON / CSV
+  v
+本地视觉服务 :8787
+  | YOLO + BoT-SORT + OCR
+  v
+.local-data/jobs/{jobId}
+  | tracking.json + job.json
+  v
+浏览器同步视频时间、球员框、篮球、雷达和统计面板
+  |
+  +--> 本地规则分析器：资料字段 -> 结构化事件 / 解说 / 证据
 ```
 
-## 服务职责
+## 模块边界
 
-| 服务 | 职责 | 为什么使用托管服务 |
-|---|---|---|
-| CloudFront | 唯一公开入口，分发页面和成片 | 满足赛事硬要求，降低视频分发延迟 |
-| S3 | 保存输入、分析 JSON、中间文件和成片 | 无需管理文件服务器，生命周期可控 |
-| API Gateway + Lambda | 创建任务、签发上传 URL、查询状态 | 低运维、按请求运行 |
-| DynamoDB | 保存 Job 状态与结果索引 | Serverless，适合状态轮询 |
-| Step Functions | 显式编排分析、渲染和发布步骤 | 失败位置、重试和执行历史清晰 |
-| Bedrock AgentCore | 承载实际 Agent，调用工具并输出可执行 JSON | 赛事硬要求，也是 Agent 的正式运行边界 |
-| Bedrock | 理解关键帧、生成战术解释与解说 | 使用主办方允许的模型能力 |
-| Polly | 生成稳定的中文解说音频 | 方便 Web 和 ESP32 使用同一音频资产 |
-| ECS/Fargate | 运行 ffmpeg 成片任务 | 视频任务较重且时长不固定，不维护 EC2 |
-| CloudWatch | 日志、指标与失败告警 | 便于比赛当天快速定位问题 |
+- `apps/web`：React 操作台、视频播放、跟踪叠加、球场雷达、统计、问答和身份确认。
+- `services/vision`：FastAPI 本地任务服务，执行 YOLO 检测、BoT-SORT 跟踪、球衣特征、可选 OCR 和结果持久化。
+- `services/agent`：无网络的确定性分析器，只读取用户上传的结构化资料，不推断缺失指标。
+- `packages/contracts`：跨模块共享的 Zod 契约和类型。
+- `services/renderer`：生成安全的 ffmpeg 可视化脚本参数。
+- `docs`：架构、数据格式和变更记录。
 
-不为了数量引入没有实际职责的服务。Rekognition、EventBridge、MediaConvert 只有在实测能提高检测、解耦或编码兼容性后才加入。
+## 真实性边界
 
-## 数据契约
+视觉跟踪输出的是画面中的轨迹和检测置信度，不等于官方球员身份或比赛统计。只有名单、号码 OCR 或人工确认提供足够证据时才显示姓名；没有资料的指标保持空态。没有球场标定时，不能把视频框直接当成标准球场坐标。
 
-`packages/contracts` 是唯一事实来源。Agent 不能只返回自然语言，必须返回 `Analysis v1`：
+## 本地任务生命周期
 
-- `events`：开始/结束秒数、单一核心指标、画面文案、锚点和证据
-- `narration`：时间点、文本和情绪
-- `provenance`：输入视频、数据文件和可选摘要
-- `warnings`：数据不足或只能做弱判断的地方
+1. Web 将视频和可选资料以 multipart 请求发送到本地服务。
+2. 服务创建 UUID 任务并保存到 `.local-data/jobs/{id}/input`。
+3. 后台线程持续写入状态、进度和 `tracking.json`。
+4. Web 轮询任务状态，完成后读取跟踪结果，并按视频时间同步显示。
+5. 身份确认通过本地接口写回任务，不依赖外部数据库。
 
-赛事数据主要是投篮事件，不将它包装成不存在的逐帧运动轨迹。视觉推断和结构化数据必须在 `evidence` 中分开说明。
+## 静态作品展示
 
-## 当前实现边界
+`apps/web/public/showcase` 包含可提交的本地展示产物：视频、分析 JSON、跟踪 JSON、统计 JSON 和 manifest。根路径只读取这些静态文件，不启动识别、不访问网络服务；`scripts/prepare-showcase.mjs` 可从本地完成任务重新生成它们。
 
-当前版本已完成可测试的本地工作流、共享契约、API、正式 AgentCore Runtime、Step Functions 编排和 ffmpeg 脚本生成器。本地视觉服务会用 YOLO 和 ByteTrack 连续处理视频，输出带时间戳的归一化球员轨迹，并由 Web 播放器同步叠加。身份置信度不足时显示轨迹编号，不把视觉候选包装成已确认姓名。
+## 已移除的边界
 
-AWS 暂停期间，本地任务保存在 `.local-data`，Web 通过与云端任务相同的状态模型轮询进度。云端恢复后，连续视觉推理将迁移到 SageMaker，轨迹写入 S3，任务状态继续由 Step Functions 和 DynamoDB 管理。AgentCore 只消费已经压缩成事件和证据的视觉结果，不负责逐帧目标跟踪。
-
-本地视觉已具备比赛名单约束、可选多帧号码 OCR 和人工身份校验。号码 OCR 只有在同一号码跨帧投票一致、且名单中唯一时才自动命名；人工确认会标记来源并写回任务结果。下一里程碑是镜头切换后的身份恢复、球场坐标标定和篮球专用检测器；随后加入 Fargate 渲染、Polly 和 ESP32 WebSocket。
-
-## 部署约束
-
-- 只部署到 `us-east-1`
-- 所有 CDK IAM Role 使用 `NBAHackathonParticipantBoundary`
-- 命令使用 `--profile nba`
-- 禁止执行 `cdk bootstrap`
-- GitHub 保持 Private，不提交凭证、视频和生成结果
-- 最终提交 CloudFront URL
+当前版本不包含 AWS SDK、CDK、S3、DynamoDB、CloudFront、API Gateway、Step Functions、Bedrock/AgentCore、云端轮询或外接设备模块。若未来重新引入远端能力，应在独立适配层中实现，并保证本地路径可独立运行。

@@ -5,7 +5,7 @@ export const demoAnalysis: Analysis = {
   generatedBy: "local-rules",
   summary: "持球人吸引协防后仍完成高难度终结，回合价值来自空间牵制与出手质量之间的反差。",
   provenance: { videoFile: "training-possession.mp4", dataFile: "built-in-demo.json" },
-  warnings: ["本地演示数据用于验证流程；正式结论必须替换为赛事数据和 AgentCore 分析。"],
+  warnings: ["本地演示数据用于验证流程；正式结论必须替换为对应比赛的真实资料。"],
   events: [
     {
       id: "gravity-read",

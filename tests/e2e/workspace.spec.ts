@@ -42,7 +42,7 @@ test("desktop workflow reaches an analysis result", async ({ page }) => {
     mimeType: "video/mp4",
     buffer: Buffer.from("video-fixture")
   });
-  await page.getByLabel("深度数据 JSON 或 CSV").setInputFiles({
+  await page.getByLabel("比赛资料 JSON 或 CSV").setInputFiles({
     name: "metrics.json",
     mimeType: "application/json",
     buffer: Buffer.from(JSON.stringify({ expectedFieldGoalPercentage: 0.47, onBallGravity: 1.71, winImpact: 3.1 }))
@@ -61,9 +61,9 @@ test("desktop workflow reaches an analysis result", async ({ page }) => {
   await page.screenshot({ path: "tmp/result-desktop.png", fullPage: true });
 });
 
-test("roster upload is available without blocking local tracking", async ({ page }) => {
+test("the unified data input accepts a roster file", async ({ page }) => {
   await page.goto("/?workspace=1");
-  await page.getByLabel("比赛名单 JSON").setInputFiles({
+  await page.getByLabel("比赛资料 JSON 或 CSV").setInputFiles({
     name: "game-roster.json",
     mimeType: "application/json",
     buffer: Buffer.from(JSON.stringify({
@@ -76,37 +76,25 @@ test("roster upload is available without blocking local tracking", async ({ page
     }))
   });
   await expect(page.getByText("game-roster.json")).toBeVisible();
-  await expect(page.getByText("不会将轨迹编号映射为球员姓名")).toHaveCount(0);
+  await expect(page.getByText("球员身份保持未确认")).toHaveCount(0);
+  await expect(page.getByLabel("比赛资料 JSON 或 CSV")).toHaveCount(1);
 });
 
 test("mobile workspace has no horizontal overflow", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/?workspace=1");
   await expect(page.getByRole("heading", { name: "把一个回合，讲得明白。" })).toBeVisible();
-  await expect(page.getByText("分析工作台").last()).toBeVisible();
+  await expect(page.getByText("素材导入与分析").last()).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await page.screenshot({ path: "tmp/home-mobile.png", fullPage: true });
 });
 
-test("review link opens a pre-generated Team28 work without an upload prompt", async ({ page }) => {
-  const tracking = {
-    version: "1.0",
-    video: { width: 1920, height: 1080, durationSeconds: 2, sourceFps: 60, processedFps: 10 },
-    model: { name: "test-model", device: "cpu", imageSize: 640 },
-    frames: [], tracks: [], warnings: []
-  };
-  const analysis = {
-    version: "1.0", generatedBy: "local-rules", summary: "预生成结果", warnings: [],
-    provenance: { videoFile: "featured.mp4", dataFile: "metrics.json" }, events: [], narration: []
-  };
-  await page.route("**/showcase/manifest.json", async (route) => {
-    await route.fulfill({ json: { version: "1.0", teamId: "Team28", title: "预生成作品", videoUrl: "featured.mp4", analysisUrl: "analysis.json", trackingUrl: "tracking.json" } });
-  });
-  await page.route("**/showcase/analysis.json", async (route) => { await route.fulfill({ json: analysis }); });
-  await page.route("**/showcase/tracking.json", async (route) => { await route.fulfill({ json: tracking }); });
+test("showcase loads local static analysis artifacts", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByText("TEAM28 · REVIEW RESULT")).toBeVisible();
   await expect(page.getByText("红细胞队 · Team28", { exact: true })).toBeVisible();
+  await expect(page.getByText("连续视觉展示")).toBeVisible();
+  await expect(page.locator("video")).toHaveAttribute("src", /\/showcase\/featured\.mp4$/);
   await expect(page.getByLabel("比赛视频")).toHaveCount(0);
-  await expect(page.getByRole("main").getByRole("button", { name: "新建分析" })).toBeVisible();
+  await expect(page.getByRole("main").getByRole("button", { name: "素材导入" })).toBeVisible();
 });

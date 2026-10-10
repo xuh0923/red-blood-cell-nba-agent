@@ -1,7 +1,7 @@
 {
   "version": "1.0",
   "generatedBy": "local-rules",
-  "summary": "预生成的连续视觉展示作品。画面中的球员框与轨迹来自本地视觉任务；指标字段仅用于演示界面，正式提交前必须替换为该视频对应的赛事深度数据和 AgentCore 分析结果。",
+  "summary": "预生成的连续视觉展示作品。画面中的球员框与轨迹来自本地视觉任务；指标字段仅用于演示界面，正式提交前必须替换为该视频对应的真实赛事资料。",
   "provenance": {
     "videoFile": "featured-game.mp4",
     "dataFile": "showcase-analysis.example.json"

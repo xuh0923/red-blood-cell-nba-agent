@@ -12,13 +12,16 @@ describe("LocalRulesAnalyzer", () => {
     expect(result.events[1]!.metric.value).toBe(0.36);
     expect(result.events[0]!.metric.value).toBe(1.62);
     expect(result.events[2]!.metric.value).toBe(-0.4);
+    expect(result.events.every((event) => event.metric.source.includes("events.json"))).toBe(true);
   });
 
-  it("never reports itself as AgentCore", async () => {
+  it("never invents metrics when the input has none", async () => {
     const result = await new LocalRulesAnalyzer().analyze({
       videoFileName: "clip.mp4", dataFileName: "demo.json", structuredData: {}
     });
     expect(result.generatedBy).toBe("local-rules");
-    expect(result.warnings.join(" ")).toContain("AgentCore");
+    expect(result.events).toEqual([]);
+    expect(result.narration).toEqual([]);
+    expect(result.warnings.join(" ")).toContain("不会使用演示数据");
   });
 });

@@ -1,0 +1,16 @@
+{
+  "source": "official game catalog export",
+  "games": [
+    {
+      "gameId": "official-game-id",
+      "gameDate": "2025-01-01",
+      "homeTeam": { "code": "HOU", "name": "Houston Rockets" },
+      "awayTeam": { "code": "DAL", "name": "Dallas Mavericks" },
+      "finalScore": [107, 103],
+      "players": [
+        { "name": "Player Name", "jerseyNumber": "7" }
+      ],
+      "source": "official data URL"
+    }
+  ]
+}

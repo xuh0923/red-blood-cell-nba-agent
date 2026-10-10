@@ -14,7 +14,6 @@ interface LocalJob {
 interface LocalWorkflowInput {
   video: File;
   data?: File;
-  roster?: File;
   onProgress: (status: JobStatus, progress: number) => void;
 }
 
@@ -44,11 +43,10 @@ export const checkLocalVision = async (): Promise<{ device: string; model: strin
   return await requestJson("/health") as { device: string; model: string };
 };
 
-export const runLocalVisionWorkflow = async ({ video, data, roster, onProgress }: LocalWorkflowInput): Promise<LocalVisionRun> => {
+export const runLocalVisionWorkflow = async ({ video, data, onProgress }: LocalWorkflowInput): Promise<LocalVisionRun> => {
   const form = new FormData();
   form.append("video", video);
   if (data) form.append("data", data);
-  if (roster) form.append("roster", roster);
   let job = parseJob(await requestJson("/jobs", { method: "POST", body: form }));
   onProgress(job.status, job.progress);
 

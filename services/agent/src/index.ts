@@ -1,4 +1,3 @@
-import { ConverseCommand, type BedrockRuntimeClient } from "@aws-sdk/client-bedrock-runtime";
 import { analysisSchema, type Analysis } from "@courtvision/contracts";
 import { demoAnalysis } from "@courtvision/contracts/fixtures";
 
@@ -8,7 +7,6 @@ export interface AnalyzeInput {
   structuredData: unknown;
   frameDescriptions?: Array<{ atSeconds: number; description: string }>;
 }
-
 export interface BasketballAnalyzer {
   analyze(input: AnalyzeInput): Promise<Analysis>;
 }
@@ -51,42 +49,40 @@ export class LocalRulesAnalyzer implements BasketballAnalyzer {
     const xfg = findNumber(input.structuredData, ["xfg", "xfgpct", "expectedfg", "expectedfieldgoalpercentage"]);
     const gravity = findNumber(input.structuredData, ["gravity", "onballgravity", "gravityscore"]);
     const impact = findNumber(input.structuredData, ["winimpact", "impact", "winprobabilityadded"]);
-    if (xfg !== undefined) result.events[1]!.metric.value = xfg > 1 ? xfg / 100 : xfg;
-    if (gravity !== undefined) result.events[0]!.metric.value = gravity;
-    if (impact !== undefined) result.events[2]!.metric.value = impact;
+    if (xfg !== undefined) {
+      result.events[1]!.metric.value = xfg > 1 ? xfg / 100 : xfg;
+      result.events[1]!.metric.source = `输入资料：${input.dataFileName} · xFG`;
+    }
+    if (gravity !== undefined) {
+      result.events[0]!.metric.value = gravity;
+      result.events[0]!.metric.source = `输入资料：${input.dataFileName} · gravity`;
+    }
+    if (impact !== undefined) {
+      result.events[2]!.metric.value = impact;
+      result.events[2]!.metric.source = `输入资料：${input.dataFileName} · winImpact`;
+    }
+
+    const availableKinds = new Set([
+      ...(xfg === undefined ? [] : ["expected_field_goal_percentage"]),
+      ...(gravity === undefined ? [] : ["on_ball_gravity"]),
+      ...(impact === undefined ? [] : ["win_impact"])
+    ]);
+    result.events = result.events.filter((event) => availableKinds.has(event.metric.kind));
+    const eventIds = new Set(result.events.map((event) => event.id));
+    result.narration = result.narration.filter((cue) => (
+      (cue.id === "n1" && eventIds.has("gravity-read"))
+      || (cue.id === "n2" && eventIds.has("shot-quality"))
+      || (cue.id === "n3" && eventIds.has("win-impact"))
+    ));
+    result.summary = availableKinds.size > 0
+      ? `本地规则读取了 ${availableKinds.size} 项有来源指标；未提供的指标保持为空。`
+      : "输入资料没有可计算的 xFG、引力或胜负影响指标。";
 
     result.warnings = [
-      "当前由确定性本地分析器生成，仅用于开发和端到端测试。",
-      "正式云端流程必须由 Bedrock AgentCore 产出并保留输入证据。"
+      "当前由确定性本地分析器生成；结果只使用已加载的比赛资料。",
+      ...(availableKinds.size === 0 ? ["没有可用指标时不会使用演示数据填充结果。"] : [])
     ];
     return analysisSchema.parse(result);
   }
 }
 
-export const analysisSystemPrompt = `你是 NBA 深度赛场分析 Agent。只使用给定数据和画面描述，不得虚构逐帧轨迹。
-输出严格 JSON，必须符合 Analysis v1：包含 summary、events、narration、warnings、provenance。
-优先解释预期命中率、持球/无球引力和胜负影响。每个 event 必须有时间范围、单一核心指标和 evidence。
-generatedBy 必须是 bedrock。信息不足时写入 warnings，不要猜测。`;
-
-export class BedrockAnalyzer implements BasketballAnalyzer {
-  constructor(
-    private readonly client: BedrockRuntimeClient,
-    private readonly modelId = "global.anthropic.claude-sonnet-4-6"
-  ) {}
-
-  async analyze(input: AnalyzeInput): Promise<Analysis> {
-    const response = await this.client.send(new ConverseCommand({
-      modelId: this.modelId,
-      system: [{ text: analysisSystemPrompt }],
-      messages: [{
-        role: "user",
-        content: [{ text: JSON.stringify(input) }]
-      }],
-      inferenceConfig: { maxTokens: 4096, temperature: 0.1 }
-    }));
-    const text = response.output?.message?.content?.find((part) => "text" in part)?.text;
-    if (!text) throw new Error("Bedrock returned no analysis text");
-    const json = text.replace(/^```json\s*/i, "").replace(/\s*```$/, "");
-    return analysisSchema.parse(JSON.parse(json));
-  }
-}

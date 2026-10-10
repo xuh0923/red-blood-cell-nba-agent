@@ -1,53 +1,48 @@
-import { analysisSchema, trackingResultSchema, type Analysis, type TrackingResult } from "@courtvision/contracts";
+import {
+  analysisSchema, gameStatsTimelineSchema, trackingResultSchema,
+  type Analysis, type GameStatsTimeline, type TrackingResult
+} from "@courtvision/contracts";
 
 export interface ShowcaseArtifact {
-  version: "1.0";
-  teamId: string;
+  id: string;
+  teamId: "Team28";
   title: string;
   videoUrl: string;
+  createdAt: string;
+  updatedAt: string;
+  durationSeconds: number;
   analysis: Analysis;
-  tracking: TrackingResult;
+  tracking?: TrackingResult;
+  stats?: GameStatsTimeline;
 }
 
-interface ShowcaseManifest {
-  version: "1.0";
-  teamId: string;
-  title: string;
-  videoUrl: string;
-  analysisUrl: string;
-  trackingUrl: string;
-}
-
-const manifestUrl = new URL("showcase/manifest.json", window.location.href);
-
-const readManifest = (value: unknown): ShowcaseManifest => {
-  if (!value || typeof value !== "object") throw new Error("作品清单格式无效");
-  const manifest = value as Partial<ShowcaseManifest>;
-  if (
-    manifest.version !== "1.0" || typeof manifest.teamId !== "string" || typeof manifest.title !== "string" ||
-    typeof manifest.videoUrl !== "string" || typeof manifest.analysisUrl !== "string" || typeof manifest.trackingUrl !== "string"
-  ) throw new Error("作品清单缺少必要字段");
-  return manifest as ShowcaseManifest;
-};
-
-const getJson = async (url: URL): Promise<unknown> => {
-  const response = await fetch(url, { cache: "no-store" });
-  if (!response.ok) throw new Error(`无法加载展示作品 (${response.status})`);
-  return response.json();
-};
-
-export const loadShowcase = async (): Promise<ShowcaseArtifact> => {
-  const manifest = readManifest(await getJson(manifestUrl));
-  const [analysis, tracking] = await Promise.all([
-    getJson(new URL(manifest.analysisUrl, manifestUrl)),
-    getJson(new URL(manifest.trackingUrl, manifestUrl))
-  ]);
-  return {
-    version: manifest.version,
-    teamId: manifest.teamId,
-    title: manifest.title,
-    videoUrl: new URL(manifest.videoUrl, manifestUrl).toString(),
-    analysis: analysisSchema.parse(analysis),
-    tracking: trackingResultSchema.parse(tracking)
+export const loadShowcaseWorks = async (): Promise<ShowcaseArtifact[]> => {
+  const root = new URL("showcase/", window.location.href);
+  const manifestResponse = await fetch(new URL("manifest.json", root), { cache: "no-store" });
+  if (!manifestResponse.ok) throw new Error("本地展示产物不存在，请先运行 npm run showcase:prepare");
+  const manifest = await manifestResponse.json() as {
+    title?: string; videoUrl: string; analysisUrl: string; trackingUrl: string; statsUrl?: string;
   };
+  const [analysisResponse, trackingResponse, statsResponse] = await Promise.all([
+    fetch(new URL(manifest.analysisUrl, root), { cache: "no-store" }),
+    fetch(new URL(manifest.trackingUrl, root), { cache: "no-store" }),
+    manifest.statsUrl ? fetch(new URL(manifest.statsUrl, root), { cache: "no-store" }) : undefined
+  ]);
+  if (!analysisResponse.ok || !trackingResponse.ok) throw new Error("本地展示产物不完整，请重新生成展示文件");
+  const analysis = analysisSchema.parse(await analysisResponse.json());
+  const tracking = trackingResultSchema.parse(await trackingResponse.json());
+  const stats = statsResponse?.ok ? gameStatsTimelineSchema.parse(await statsResponse.json()) : undefined;
+  const now = new Date().toISOString();
+  return [{
+    id: "00000000-0000-4000-8000-000000000028",
+    teamId: "Team28",
+    title: manifest.title ?? "NBA 连续视觉分析展示",
+    videoUrl: new URL(manifest.videoUrl, root).toString(),
+    createdAt: now,
+    updatedAt: now,
+    durationSeconds: tracking.video.durationSeconds,
+    analysis,
+    tracking,
+    stats
+  }];
 };
