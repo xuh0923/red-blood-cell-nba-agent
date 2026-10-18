@@ -68,10 +68,6 @@ nav { display: grid; gap: 5px; }
 .cloud-state small { color: #728292; font-size: 9px; }
 .cloud-state > span { width: 7px; height: 7px; border-radius: 50%; background: var(--green); box-shadow: 0 0 8px var(--green); }
 .local-mode-badge { display: inline-flex; align-items: center; gap: 6px; min-height: 28px; padding: 0 10px; border: 1px solid #2a3945; border-radius: 4px; color: var(--cyan); font-size: 9px; }
-.mode-selector { display: flex; gap: 2px; padding: 2px; border: 1px solid #2a3945; border-radius: 4px; background: #0a131b; }
-.mode-selector button { min-height: 29px; padding: 0 10px; display: flex; align-items: center; gap: 6px; border: 0; border-radius: 2px; background: transparent; color: #748694; font-size: 9px; cursor: pointer; }
-.mode-selector button.active { background: #143039; color: var(--cyan); box-shadow: inset 0 0 0 1px #2e6670; }
-.mode-selector button:disabled { opacity: .42; cursor: not-allowed; }
 .team-label { margin-top: 14px; text-align: center; color: #536271; font-size: 9px; }
 
 main { min-width: 0; grid-column: 2; }

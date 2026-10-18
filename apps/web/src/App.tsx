@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  Activity, BadgeCheck, BarChart3, Check, ChevronRight, CircleDot, Cloud, Cpu, Database,
+  Activity, BadgeCheck, BarChart3, Check, ChevronRight, CircleDot, Cpu, Database,
   FileJson, Film, Gauge, HardDriveUpload, Images, Info, LayoutDashboard,
   Bot, LoaderCircle, MessageCircle, Mic2, Play, RotateCcw, Send, ShieldCheck, Sparkles, Upload, Users
 } from "lucide-react";
@@ -15,10 +15,8 @@ import {
 } from "@courtvision/contracts";
 import type { GameStatsSnapshot, GameStatsTimeline, TeamStats } from "@courtvision/contracts";
 import { createDemoAnalysis, parseDataFile, parseStatsTimeline, workflowSteps } from "./demo-workflow";
-import { extractVideoFrames, releaseFrames, type ExtractedFrame } from "./video-frames";
-import { calculateVideoDigest } from "./video-digest";
+import { releaseFrames, type ExtractedFrame } from "./video-frames";
 import { runLocalVisionWorkflow, updateLocalTrackIdentity } from "./local-workflow";
-import { cloudAvailable, runCloudWorkflow } from "./cloud-workflow";
 import { loadShowcaseWorks, type ShowcaseArtifact } from "./showcase";
 import { findStatsSnapshot, percentage } from "./stats";
 import { extractMatchCandidates, resolveMatchIdentity } from "./match-resolution";
@@ -26,11 +24,10 @@ import { NBA_COURT, threePointArcPath, toCourtPoint } from "./court-geometry";
 
 type Tab = "overview" | "evidence" | "identity";
 type Screen = "showcase" | "workspace";
-type ProcessingMode = "local" | "aws";
 type StatsTab = "offense" | "defense" | "efficiency" | "state";
 
   const statusLabels: Record<JobStatus, string> = {
-  draft: "等待输入", uploading: "上传素材", queued: "等待处理", extracting_frames: "读取视频帧",
+  draft: "等待输入", uploading: "准备本地任务", queued: "等待处理", extracting_frames: "读取视频帧",
   analyzing: "连续视觉分析", rendering: "生成叠加", publishing: "准备结果", completed: "分析完成", failed: "处理失败"
 };
 const metricIcons = [Gauge, Activity, BarChart3];
@@ -263,7 +260,6 @@ export function App() {
   const [statsTab, setStatsTab] = useState<StatsTab>("offense");
   const [videoFile, setVideoFile] = useState<File>();
   const [dataFile, setDataFile] = useState<File>();
-  const [processingMode, setProcessingMode] = useState<ProcessingMode>(() => cloudAvailable ? "aws" : "local");
   const [videoUrl, setVideoUrl] = useState<string>();
   const [status, setStatus] = useState<JobStatus>("draft");
   const [progress, setProgress] = useState(0);
@@ -396,44 +392,21 @@ export function App() {
     setError(undefined); setAnalysis(undefined); setIsRunning(true);
     try {
       const data = await parseDataFile(dataFile);
-      let trackingResult: TrackingResult | undefined;
-      let result: Analysis;
-      if (processingMode === "aws") {
-        setStatus("extracting_frames"); setProgress(9);
-        const [extracted, inputDigest] = await Promise.all([
-          extractVideoFrames(videoFile, 6),
-          calculateVideoDigest(videoFile, (value) => setProgress(9 + Math.round(value * 5)))
-        ]);
-        setFrames(extracted.frames);
-        const cloudRun = await runCloudWorkflow({
-          video: videoFile,
-          data: dataFile,
-          duration: extracted.duration,
-          frames: extracted.frames,
-          inputDigest,
-          onProgress: (nextStatus, nextProgress) => { setStatus(nextStatus); setProgress(nextProgress); }
-        });
-        trackingResult = cloudRun.tracking;
-        result = structuredClone(cloudRun.analysis);
-        setLocalJobId(undefined);
-        if (cloudRun.videoUrl) setVideoUrl(cloudRun.videoUrl);
-      } else {
-        const localRun = await runLocalVisionWorkflow({
-          video: videoFile,
-          data: dataFile,
-          onProgress: (nextStatus, nextProgress) => { setStatus(nextStatus); setProgress(nextProgress); }
-        });
-        trackingResult = localRun.tracking;
-        setLocalJobId(localRun.jobId);
-        result = createDemoAnalysis(videoFile.name, dataFile?.name ?? "built-in-demo.json", data);
-        const playerTracks = trackingResult.tracks.filter((track) => track.role === "player").length;
-        result.summary = `连续视觉以 ${trackingResult.video.processedFps.toFixed(1)} FPS 分析画面，得到 ${playerTracks} 条球员轨迹；身份需结合号码 OCR 和名单继续确认。`;
-      }
+      const localRun = await runLocalVisionWorkflow({
+        video: videoFile,
+        data: dataFile,
+        onProgress: (nextStatus, nextProgress) => { setStatus(nextStatus); setProgress(nextProgress); }
+      });
+      const trackingResult = localRun.tracking;
+      setLocalJobId(localRun.jobId);
       setTracking(trackingResult);
       setStatsTimeline(parseStatsTimeline(data));
-      const resolution = resolveMatchIdentity(trackingResult?.videoEvidence ?? [], extractMatchCandidates(data));
+      const resolution = resolveMatchIdentity(trackingResult.videoEvidence, extractMatchCandidates(data));
       setMatchResolution(resolution);
-      result.warnings = [...(trackingResult?.warnings ?? []), ...resolution.warnings, ...result.warnings];
+      const result = createDemoAnalysis(videoFile.name, dataFile?.name ?? "built-in-demo.json", data);
+      const playerTracks = trackingResult.tracks.filter((track) => track.role === "player").length;
+      result.summary = `连续视觉以 ${trackingResult.video.processedFps.toFixed(1)} FPS 分析画面，得到 ${playerTracks} 条球员轨迹；身份需结合号码 OCR 和名单继续确认。`;
+      result.warnings = [...trackingResult.warnings, ...resolution.warnings, ...result.warnings];
       setAnalysis(result);
       setActiveEvent(result.events[0]);
     } catch (cause) {
@@ -511,13 +484,13 @@ export function App() {
           <button className={`nav-item ${screen === "workspace" ? "active" : ""}`} onClick={openWorkspace}><LayoutDashboard size={18} /><span>素材导入</span></button>
         </nav>
         <div className="sidebar-spacer" />
-        <div className="cloud-state">{processingMode === "aws" ? <Cloud size={16} /> : <Cpu size={16} />}<div><strong>{processingMode === "aws" ? "AWS 托管模式" : "本地视觉模式"}</strong><small>{processingMode === "aws" ? "S3 · Rekognition · MediaConvert" : "YOLO · BoT-SORT"}</small></div><span /></div>
+        <div className="cloud-state"><Cpu size={16} /><div><strong>本地视觉模式</strong><small>连续检测与跟踪</small></div><span /></div>
         <div className="team-label">红细胞队 · Team28 · NBA</div>
       </aside>
 
       <main>
         <header className="topbar">
-          <div><p>{screen === "showcase" ? "TEAM28 · ANALYSIS LIBRARY" : "素材导入与分析"}</p><h1>{completed ? jobName : screen === "workspace" ? "创建比赛解读" : "作品展示"}</h1></div>
+          <div><p>{screen === "showcase" ? "TEAM28 · LOCAL ANALYSIS LIBRARY" : "素材导入与分析"}</p><h1>{completed ? jobName : screen === "workspace" ? "创建比赛解读" : "作品展示"}</h1></div>
           <div className="top-actions">
             {screen === "showcase" ? <button className="new-analysis-button" onClick={openWorkspace}><HardDriveUpload size={15} />素材导入</button> : completed && <button className="icon-button" onClick={openWorkspace} title="新建分析"><RotateCcw size={18} /></button>}
           </div>
@@ -549,10 +522,7 @@ export function App() {
 
             <section className="configuration-section">
               <div className="section-heading"><div><span>02</span><div><h3>分析策略</h3><p>第一版聚焦赛事要求的三类核心指标。</p></div></div>
-              <div className="mode-selector" aria-label="处理模式">
-                <button className={processingMode === "local" ? "active" : ""} onClick={() => setProcessingMode("local")} disabled={isRunning}><Cpu size={14} />本地精确识别</button>
-                <button className={processingMode === "aws" ? "active" : ""} onClick={() => setProcessingMode("aws")} disabled={!cloudAvailable || isRunning} title={cloudAvailable ? "AWS 托管上传、识别与播放优化" : "本地开发需配置 VITE_API_URL"}><Cloud size={14} />AWS 托管处理</button>
-              </div>
+              <span className="local-mode-badge"><Cpu size={14} />本地连续视觉</span>
               </div>
               <div className="metric-options">
                 {["预期命中率", "持球 / 无球引力", "胜负影响"].map((name, index) => {
@@ -572,7 +542,7 @@ export function App() {
             )}
 
             <div className="run-row">
-              <div><ShieldCheck size={17} /><span>{processingMode === "aws" ? "视频将四路分片直传 S3，完成后生成适合网页播放的 1080p MP4。" : "本地模型会进行更细的连续检测、球队聚类和名单约束。"}</span></div>
+              <div><ShieldCheck size={17} /><span>本地模型将连续检测和跟踪球员，首次运行会下载模型。</span></div>
               <button className="primary-button" disabled={!videoFile || isRunning} onClick={run}>{isRunning ? <LoaderCircle size={18} className="spin" /> : <Sparkles size={18} />}{isRunning ? "正在处理" : "开始连续识别"}</button>
             </div>
           </div>
@@ -634,7 +604,7 @@ export function App() {
                       <select
                         aria-label={`确认轨迹 ${track.trackId} 的球员身份`}
                         value={track.playerId ?? ""}
-                        disabled={!localJobId || identitySavingTrack !== undefined}
+                        disabled={identitySavingTrack !== undefined}
                         onChange={(event) => void confirmIdentity(track.trackId, event.target.value || null)}
                       >
                         <option value="">保持未确认</option>
@@ -647,7 +617,7 @@ export function App() {
                 </section>
               </aside>
             </div>
-              <div className="result-footer"><span><BadgeCheck size={16} />红细胞队 · Team28</span><span><Mic2 size={16} />{analysis.narration.length} 条解说提示</span><span><Database size={16} />{analysis.provenance.dataFile}</span>{tracking && <span><Activity size={16} />{tracking.tracks.filter((track) => track.role === "player").length} 条球员轨迹</span>}{tracking?.quality && <span><Gauge size={16} />画面覆盖 {Math.round(tracking.quality.frameCoverage * 100)}% · 篮球 {Math.round(tracking.quality.ballFrameCoverage * 100)}%</span>}{tracking?.roster && <span><Users size={16} />{tracking.roster.playerCount} 人名单已加载</span>}{matchResolution && <span><ShieldCheck size={16} />比赛身份：{matchResolution.status === "confirmed" ? "已确认" : matchResolution.status === "ambiguous" ? "待复核" : "未确认"}</span>}<span><ShieldCheck size={16} />{screen === "showcase" ? (tracking?.model.device === "aws-managed" ? "AWS 托管作品" : "预生成展示产物") : tracking ? `${processingMode === "aws" ? "AWS 托管" : "本地视觉"} · ${tracking.model.device.toUpperCase()}` : "验证结果"}</span></div>
+              <div className="result-footer"><span><BadgeCheck size={16} />红细胞队 · Team28</span><span><Mic2 size={16} />{analysis.narration.length} 条解说提示</span><span><Database size={16} />{analysis.provenance.dataFile}</span>{tracking && <span><Activity size={16} />{tracking.tracks.filter((track) => track.role === "player").length} 条球员轨迹</span>}{tracking?.quality && <span><Gauge size={16} />画面覆盖 {Math.round(tracking.quality.frameCoverage * 100)}% · 篮球 {Math.round(tracking.quality.ballFrameCoverage * 100)}%</span>}{tracking?.roster && <span><Users size={16} />{tracking.roster.playerCount} 人名单已加载</span>}{matchResolution && <span><ShieldCheck size={16} />比赛身份：{matchResolution.status === "confirmed" ? "已确认" : matchResolution.status === "ambiguous" ? "待复核" : "未确认"}</span>}<span><ShieldCheck size={16} />{screen === "showcase" ? "本地展示产物" : tracking ? `本地视觉 · ${tracking.model.device.toUpperCase()}` : "本地验证结果"}</span></div>
           </div>
         )}
       </main>

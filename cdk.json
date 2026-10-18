@@ -1,8 +1,0 @@
-{
-  "app": "npm run synth -w @courtvision/infra",
-  "context": {
-    "@aws-cdk/core:permissionsBoundary": {
-      "name": "NBAHackathonParticipantBoundary"
-    }
-  }
-}

@@ -1,5 +1,5 @@
 import {
-  analysisSchema, completedWorksResponseSchema, gameStatsTimelineSchema, trackingResultSchema,
+  analysisSchema, gameStatsTimelineSchema, trackingResultSchema,
   type Analysis, type GameStatsTimeline, type TrackingResult
 } from "@courtvision/contracts";
 
@@ -17,18 +17,6 @@ export interface ShowcaseArtifact {
 }
 
 export const loadShowcaseWorks = async (): Promise<ShowcaseArtifact[]> => {
-  if (!["localhost", "127.0.0.1"].includes(window.location.hostname) || import.meta.env.VITE_API_URL) {
-    try {
-      const apiBase = ((import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/$/, "")) ?? "/api";
-      const response = await fetch(`${apiBase}/works`, { cache: "no-store" });
-      if (response.ok) {
-        const cloud = completedWorksResponseSchema.parse(await response.json());
-        if (cloud.works.length) return cloud.works;
-      }
-    } catch (error) {
-      console.warn("AWS 作品库暂时不可用，回退到静态展示产物", error);
-    }
-  }
   const root = new URL("showcase/", window.location.href);
   const manifestResponse = await fetch(new URL("manifest.json", root), { cache: "no-store" });
   if (!manifestResponse.ok) throw new Error("本地展示产物不存在，请先运行 npm run showcase:prepare");
