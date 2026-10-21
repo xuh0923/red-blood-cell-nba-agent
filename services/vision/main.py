@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import shutil
@@ -15,20 +16,26 @@ from typing import Any
 import cv2
 import numpy as np
 import torch
+from dotenv import load_dotenv
 from fastapi import Body, FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
 
 ROOT = Path(__file__).resolve().parents[2]
+load_dotenv(ROOT / ".env")
 DATA_ROOT = Path(os.getenv("COURTVISION_LOCAL_DATA", ROOT / ".local-data")).resolve()
-MODEL_NAME = os.getenv("COURTVISION_VISION_MODEL", "yolo11n.pt")
-TARGET_FPS = max(1.0, float(os.getenv("COURTVISION_TRACKING_FPS", "10")))
-MODEL_SIZE = max(320, int(os.getenv("COURTVISION_MODEL_SIZE", "640")))
 DEVICE = "cuda:0" if torch.cuda.is_available() else "cpu"
-PLAYER_MIN_CONFIDENCE = max(0.05, min(0.95, float(os.getenv("COURTVISION_PLAYER_MIN_CONFIDENCE", "0.35"))))
-BALL_MIN_CONFIDENCE = max(0.05, min(0.95, float(os.getenv("COURTVISION_BALL_MIN_CONFIDENCE", "0.30"))))
+MODEL_NAME = os.getenv("COURTVISION_VISION_MODEL", "yolo11s.pt")
+TARGET_FPS = max(1.0, float(os.getenv("COURTVISION_TRACKING_FPS", "12")))
+MODEL_SIZE = max(320, int(os.getenv("COURTVISION_MODEL_SIZE", "960" if DEVICE != "cpu" else "640")))
+PLAYER_MIN_CONFIDENCE = max(0.05, min(0.95, float(os.getenv("COURTVISION_PLAYER_MIN_CONFIDENCE", "0.45"))))
+BALL_MIN_CONFIDENCE = max(0.05, min(0.95, float(os.getenv("COURTVISION_BALL_MIN_CONFIDENCE", "0.18"))))
 SCOREBOARD_INTERVAL_SECONDS = max(1.0, float(os.getenv("COURTVISION_SCOREBOARD_INTERVAL_SECONDS", "3")))
+MIN_TRACK_SECONDS = max(0.2, float(os.getenv("COURTVISION_MIN_TRACK_SECONDS", "0.65")))
+TRACK_MERGE_GAP_SECONDS = max(0.1, float(os.getenv("COURTVISION_TRACK_MERGE_GAP_SECONDS", "0.9")))
+TEAM_CLUSTER_MIN_DISTANCE = max(1.0, float(os.getenv("COURTVISION_TEAM_CLUSTER_MIN_DISTANCE", "38")))
+AUTO_REFEREE_FILTER = os.getenv("COURTVISION_AUTO_REFEREE_FILTER", "1").strip().lower() in {"1", "true", "yes"}
 PLAYER_CLASS_ID = int(os.getenv("COURTVISION_PLAYER_CLASS_ID", "0"))
 BALL_CLASS_ID = int(os.getenv("COURTVISION_BALL_CLASS_ID", "32"))
 DETECTOR_CLASSES = tuple(
@@ -119,23 +126,131 @@ def jersey_features(frame: np.ndarray, box: list[float]) -> list[float] | None:
 
 
 def is_court_person(box: dict[str, float]) -> bool:
+    """Reject score-bug, bench and crowd detections before they become player tracks."""
     bottom = box["y"] + box["height"]
+    center_x = box["x"] + box["width"] / 2
     aspect = box["height"] / max(box["width"], 0.001)
+    area = box["width"] * box["height"]
     return (
-        box["height"] >= 0.105
+        box["height"] >= 0.06
         and box["height"] <= 0.62
-        and bottom >= 0.34
-        and bottom <= 0.91
-        and aspect >= 1.12
+        and area >= 0.0012
+        and 0.035 <= center_x <= 0.965
+        and bottom >= 0.38
+        and bottom <= 0.90
+        and 0.85 <= aspect <= 5.8
     )
 
 
 def referee_candidate(features: list[list[float]]) -> bool:
-    """Flag only strong gray-striped uniform evidence; uncertain tracks remain players."""
-    if len(features) < 6:
+    """Only emit a referee candidate for unusually strong grayscale evidence."""
+    if len(features) < 10:
         return False
     lightness, saturation, contrast = np.median(features, axis=0)
-    return 48 <= lightness <= 172 and saturation <= 54 and contrast >= 43
+    return 62 <= lightness <= 160 and saturation <= 31 and contrast >= 56
+
+
+def box_center(box: dict[str, float]) -> tuple[float, float]:
+    return box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
+
+
+def filter_ball_candidates(frames: list[dict[str, Any]]) -> int:
+    """Remove isolated COCO sports-ball false positives while retaining fast, supported motion."""
+    removed = 0
+    for index, frame in enumerate(frames):
+        ball = frame.get("ball")
+        if not isinstance(ball, dict):
+            continue
+        current_x, current_y = box_center(ball["box"])
+        supported = False
+        for neighbor_index in (index - 2, index - 1, index + 1, index + 2):
+            if neighbor_index < 0 or neighbor_index >= len(frames):
+                continue
+            neighbor = frames[neighbor_index].get("ball")
+            if not isinstance(neighbor, dict):
+                continue
+            delta_seconds = abs(frames[neighbor_index]["atSeconds"] - frame["atSeconds"])
+            if delta_seconds <= 0:
+                continue
+            neighbor_x, neighbor_y = box_center(neighbor["box"])
+            distance = math.hypot(neighbor_x - current_x, neighbor_y - current_y)
+            if distance <= 0.055 + 1.55 * delta_seconds:
+                supported = True
+                break
+        if not supported and ball["confidence"] < 0.48:
+            frame.pop("ball", None)
+            removed += 1
+    return removed
+
+
+def merge_track_fragments(
+    frames: list[dict[str, Any]],
+    valid_tracks: set[int],
+    track_colors: dict[int, list[list[float]]],
+) -> dict[int, int]:
+    """Join non-overlapping Bot-SORT fragments only when space, scale and jersey color agree."""
+    observations: dict[int, list[tuple[float, dict[str, float]]]] = {track_id: [] for track_id in valid_tracks}
+    for frame in frames:
+        for player in frame["players"]:
+            track_id = player["trackId"]
+            if track_id in observations:
+                observations[track_id].append((frame["atSeconds"], player["box"]))
+
+    records: list[dict[str, Any]] = []
+    for track_id, items in observations.items():
+        if not items:
+            continue
+        first_time, first_box = items[0]
+        last_time, last_box = items[-1]
+        colors = track_colors.get(track_id, [])
+        records.append({
+            "trackId": track_id,
+            "firstTime": first_time,
+            "firstBox": first_box,
+            "lastTime": last_time,
+            "lastBox": last_box,
+            "color": np.median(colors, axis=0) if len(colors) >= 3 else None,
+        })
+    records.sort(key=lambda item: (item["firstTime"], item["trackId"]))
+    remap = {track_id: track_id for track_id in valid_tracks}
+
+    for later in records:
+        candidates: list[tuple[float, dict[str, Any]]] = []
+        later_x, later_y = box_center(later["firstBox"])
+        for earlier in records:
+            if earlier["trackId"] == later["trackId"] or earlier["lastTime"] >= later["firstTime"]:
+                continue
+            gap = later["firstTime"] - earlier["lastTime"]
+            if gap > TRACK_MERGE_GAP_SECONDS:
+                continue
+            earlier_x, earlier_y = box_center(earlier["lastBox"])
+            distance = math.hypot(later_x - earlier_x, later_y - earlier_y)
+            max_distance = 0.035 + gap * 0.14
+            height_ratio = later["firstBox"]["height"] / max(earlier["lastBox"]["height"], 0.001)
+            if distance > max_distance or not 0.66 <= height_ratio <= 1.5:
+                continue
+            if later["color"] is None or earlier["color"] is None:
+                continue
+            color_distance = float(np.linalg.norm((later["color"] - earlier["color"]) / np.array([52, 46, 34])))
+            if color_distance > 0.82:
+                continue
+            candidates.append((distance / max_distance + color_distance, earlier))
+        if candidates:
+            _, best = min(candidates, key=lambda item: item[0])
+            remap[later["trackId"]] = remap[best["trackId"]]
+    return remap
+
+
+def apply_track_remap(frames: list[dict[str, Any]], remap: dict[int, int]) -> None:
+    for frame in frames:
+        deduplicated: dict[int, dict[str, Any]] = {}
+        for player in frame["players"]:
+            track_id = remap.get(player["trackId"], player["trackId"])
+            player["trackId"] = track_id
+            existing = deduplicated.get(track_id)
+            if existing is None or player["confidence"] > existing["confidence"]:
+                deduplicated[track_id] = player
+        frame["players"] = list(deduplicated.values())
 
 
 def jersey_number_crop(frame: np.ndarray, box: list[float]) -> np.ndarray | None:
@@ -230,6 +345,8 @@ def assign_teams(
         8,
         cv2.KMEANS_PP_CENTERS,
     )
+    if float(np.linalg.norm(centers[0] - centers[1])) < TEAM_CLUSTER_MIN_DISTANCE:
+        return {}
     order = np.argsort(centers[:, 0])
     cluster_name = {int(order[0]): "team-a", int(order[1]): "team-b"}
     mapping = {track_id: cluster_name[int(labels[index][0])] for index, track_id in enumerate(eligible)}
@@ -370,10 +487,11 @@ def process_job(job_id: str, video_path: Path, roster_path: Path | None = None) 
                 persist=True,
                 tracker=str(TRACKER_CONFIG),
                 classes=list(DETECTOR_CLASSES),
-                conf=0.24,
+                conf=min(PLAYER_MIN_CONFIDENCE, BALL_MIN_CONFIDENCE),
                 iou=0.5,
                 imgsz=MODEL_SIZE,
                 device=DEVICE,
+                half=DEVICE != "cpu",
                 verbose=False,
             )[0]
             players: list[dict[str, Any]] = []
@@ -431,12 +549,26 @@ def process_job(job_id: str, video_path: Path, roster_path: Path | None = None) 
             for player in frame["players"]:
                 track_id = player["trackId"]
                 observation_counts[track_id] = observation_counts.get(track_id, 0) + 1
-        minimum_observations = max(3, round((source_fps / stride) * 0.4))
+        minimum_observations = max(5, math.ceil((source_fps / stride) * MIN_TRACK_SECONDS))
         valid_tracks = {track_id for track_id, count in observation_counts.items() if count >= minimum_observations}
+        track_remap = merge_track_fragments(frames, valid_tracks, track_colors)
+        apply_track_remap(frames, track_remap)
+        valid_tracks = set(track_remap.values())
+        merged_colors: dict[int, list[list[float]]] = {}
+        merged_number_crops: dict[int, list[np.ndarray]] = {}
+        for track_id, colors in track_colors.items():
+            if track_id in track_remap:
+                merged_colors.setdefault(track_remap[track_id], []).extend(colors)
+        for track_id, crops in track_number_crops.items():
+            if track_id in track_remap:
+                merged_number_crops.setdefault(track_remap[track_id], []).extend(crops)
+        track_colors = merged_colors
+        track_number_crops = merged_number_crops
+        removed_ball_candidates = filter_ball_candidates(frames)
         display_ids = {track_id: index + 1 for index, track_id in enumerate(sorted(valid_tracks))}
         referee_tracks = {
             track_id for track_id in valid_tracks
-            if referee_candidate(track_colors.get(track_id, []))
+            if AUTO_REFEREE_FILTER and referee_candidate(track_colors.get(track_id, []))
         }
         player_tracks = valid_tracks - referee_tracks
         for frame in frames:
@@ -547,7 +679,9 @@ def process_job(job_id: str, video_path: Path, roster_path: Path | None = None) 
             "warnings": [
                 "球员姓名尚未确认时显示轨迹编号。",
                 "球队颜色为无监督候选结果，需要结合比赛名单和球衣号码校验。",
-                *(["当前使用 COCO 通用检测模型，不能据此证明球员身份或球权。"] if MODEL_NAME.lower().endswith(("yolo11n.pt", "yolo11n")) else []),
+                "当前使用 COCO 通用检测模型，人物和篮球仍需结合人工复核，不能据此证明球员身份或球权。",
+                *([f"已合并 {sum(1 for source, target in track_remap.items() if source != target)} 条短暂中断的轨迹片段。"] if any(source != target for source, target in track_remap.items()) else []),
+                *([f"已过滤 {removed_ball_candidates} 个缺少时序支持的篮球候选。"] if removed_ball_candidates else []),
                 *(["球员轨迹数量明显高于篮球场上人数，可能存在 ID 切换或场边误检；请在质量面板复核。"] if len(player_tracks) > 20 else []),
                 *(["篮球有效帧覆盖率低于 20%，不会把最近一次篮球位置当作当前帧。"] if sum(1 for frame in frames if frame.get("ball")) / max(1, len(frames)) < 0.2 else []),
                 *(["未检测到本地 Tesseract，号码 OCR 已跳过；可通过人工身份校验确认轨迹。"] if not TESSERACT_PATH else []),

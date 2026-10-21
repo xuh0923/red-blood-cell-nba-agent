@@ -13,7 +13,7 @@
 
 ## 快速开始
 
-环境要求：Node.js 22+、npm 10+、Python 3.11+、ffmpeg/ffprobe。
+环境要求：Node.js 22+、npm 10+、Python 3.11+、ffmpeg/ffprobe。推荐 NVIDIA GPU；服务会自动使用 CUDA，未检测到 CUDA 时回退到 CPU。
 
 ```powershell
 npm install
@@ -22,7 +22,16 @@ python -m venv .venv
 npm run dev
 ```
 
+如使用 NVIDIA 显卡，先安装 CUDA 版 PyTorch 后再安装其余依赖。项目已在 RTX 3060 + CUDA 12.8 上验证：
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install --index-url https://download.pytorch.org/whl/cu128 torch==2.11.0+cu128 torchvision==0.26.0+cu128
+.\.venv\Scripts\python.exe -m pip install -r services\vision\requirements.txt
+```
+
 打开 `http://127.0.0.1:5173`，进入“素材导入”上传视频。`npm run dev` 会同时启动 React 前端和本地视觉服务；首次识别会下载 YOLO 模型。任务文件保存在 `.local-data/jobs/{jobId}`。
+
+默认视觉配置使用 `YOLO11s`、GPU 960 像素推理、连续轨迹筛选和篮球时序校验，优先减少场边人员与短暂误检。可复制 `.env.example` 为 `.env` 后按显卡性能调整；服务会自动读取该文件。CPU 环境建议把 `COURTVISION_MODEL_SIZE` 改为 `640`。
 
 根路径读取 `apps/web/public/showcase` 中的静态展示产物，不访问云端接口。需要更新展示内容时运行：
 

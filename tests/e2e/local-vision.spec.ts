@@ -6,7 +6,7 @@ test("local vision tracks players in real footage", async ({ page }) => {
   test.skip(!videoPath, "COURTVISION_LOCAL_VIDEO is required for the real vision test");
   test.setTimeout(3 * 60_000);
   await page.setViewportSize({ width: 1440, height: 1000 });
-  await page.goto("/");
+  await page.goto("/?workspace=1");
   await page.getByLabel("比赛视频").setInputFiles(videoPath!);
   await page.getByRole("button", { name: "开始连续识别" }).click();
   await expect(page.getByText("ANALYSIS COMPLETE")).toBeVisible({ timeout: 120_000 });
