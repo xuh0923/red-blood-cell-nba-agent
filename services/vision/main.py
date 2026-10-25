@@ -665,12 +665,12 @@ def process_job(job_id: str, video_path: Path, roster_path: Path | None = None) 
             "quality": {
                 "frameCoverage": round(sum(1 for frame in frames if frame["players"]) / max(1, len(frames)), 4),
                 "ballFrameCoverage": round(sum(1 for frame in frames if frame.get("ball")) / max(1, len(frames)), 4),
-                "meanPlayerConfidence": round(
-                    sum(player["confidence"] for frame in frames for player in frame["players"])
-                    / max(1, sum(len(frame["players"]) for frame in frames)),
-                    4,
-                ),
                 "trackCount": len(player_tracks),
+                "processedFrameCount": len(frames),
+                "playerVisibleFrameCount": sum(1 for frame in frames if frame["players"]),
+                "ballVisibleFrameCount": sum(1 for frame in frames if frame.get("ball")),
+                "identifiedTrackCount": len(identity_by_track),
+                "ocrIdentityCount": sum(1 for item in identity_by_track.values() if item.get("identitySource") == "ocr"),
             },
             "videoEvidence": video_evidence[:160],
             "frames": frames,

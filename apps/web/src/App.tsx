@@ -115,7 +115,7 @@ function TrackingLayer({ players, ball }: {
           style={{
             ...place(ball.box.x + ball.box.width / 2, ball.box.y + ball.box.height / 2)
           }}
-          title={`篮球置信度 ${Math.round(ball.confidence * 100)}%`}
+          title="篮球视觉候选，仅表示当前帧检测到的画面目标"
         />
       )}
     </div>
@@ -193,7 +193,7 @@ function CourtRadar({ frame, trackingTime, period, gameClock, shotClock, dataSta
   );
 }
 
-function StatsDashboard({ snapshot, matchResolution, isDemo, tab, onTabChange }: { snapshot?: GameStatsSnapshot; matchResolution?: MatchResolution; isDemo?: boolean; tab: StatsTab; onTabChange: (tab: StatsTab) => void }) {
+function StatsDashboard({ timeline, snapshot, matchResolution, isDemo, tab, onTabChange }: { timeline?: GameStatsTimeline; snapshot?: GameStatsSnapshot; matchResolution?: MatchResolution; isDemo?: boolean; tab: StatsTab; onTabChange: (tab: StatsTab) => void }) {
   const left = snapshot?.teams[0];
   const right = snapshot?.teams[1];
   const labels: Record<StatsTab, string> = { offense: "进攻", defense: "防守", efficiency: "效率", state: "比赛状态" };
@@ -221,8 +221,12 @@ function StatsDashboard({ snapshot, matchResolution, isDemo, tab, onTabChange }:
       { label: "二次进攻", left: left.secondChancePoints, right: right.secondChancePoints }, { label: "最大分差", left: left.largestLead, right: right.largestLead }
     ]
   }[tab] ?? []) : [];
+  const provenance = timeline?.provenance;
+  const sourceLabel = isDemo || provenance?.sourceType === "demo" ? "示例数据" : provenance?.sourceType === "nba-official-manual" ? "NBA 官网人工标注" : provenance?.sourceType === "official-structured" ? "官方结构化资料" : provenance?.sourceType === "user-structured" ? "用户结构化资料" : snapshot ? "来源信息未填写" : matchResolution?.status === "confirmed" ? "身份已确认" : "等待数据源";
+  const sourceDetail = provenance?.recordCount !== undefined ? `${provenance.recordCount} 条记录${provenance.datasetVersion ? ` · ${provenance.datasetVersion}` : ""}` : provenance?.annotatedBy ? `标注：${provenance.annotatedBy}` : undefined;
   return <section className="stats-dashboard" aria-label="篮球比赛数据仪表盘">
-    <div className="stats-head"><div><strong>比赛数据</strong><small>{snapshot ? `${snapshot.period ? `第 ${snapshot.period} 节 · ` : ""}${snapshot.clock ?? "时间同步"}` : matchResolution?.status === "confirmed" ? "比赛已确认，等待官方统计" : "暂无结构化比赛数据"}</small></div><span>{isDemo ? "示例数据" : snapshot ? "数据快照" : matchResolution?.status === "confirmed" ? "身份已确认" : "等待数据源"}</span></div>
+    <div className="stats-head"><div><strong>比赛数据</strong><small>{snapshot ? `${snapshot.period ? `第 ${snapshot.period} 节 · ` : ""}${snapshot.clock ?? "时间同步"}` : matchResolution?.status === "confirmed" ? "比赛已确认，等待官方统计" : "暂无结构化比赛数据"}</small></div><span>{sourceLabel}</span></div>
+    {snapshot && <div className={`data-provenance ${provenance?.sourceType ?? "unknown"}`}><BadgeCheck size={14} /><div><strong>{sourceLabel}</strong><small>{sourceDetail ?? timeline?.source ?? "结构化来源未填写，不能作为官方比赛事实展示"}</small></div>{provenance?.sourceUrls?.[0] && <a href={provenance.sourceUrls[0]} target="_blank" rel="noreferrer">查看来源</a>}</div>}
     <div className="stats-tabs">{(Object.keys(labels) as StatsTab[]).map((key) => <button key={key} className={tab === key ? "active" : ""} onClick={() => onTabChange(key)}>{labels[key]}</button>)}</div>
     {snapshot && left && right ? <>
       <div className="stats-score"><span>{left.teamCode}<b>{left.score}</b></span><i>:</i><span><b>{right.score}</b>{right.teamCode}</span></div>
@@ -439,7 +443,7 @@ export function App() {
   const visiblePlayers = trackedFrame?.players.filter((player) => player.role === "player") ?? [];
   const visibleTeamA = visiblePlayers.filter((player) => player.team === "team-a").length;
   const visibleTeamB = visiblePlayers.filter((player) => player.team === "team-b").length;
-  const averageConfidence = visiblePlayers.length ? Math.round(visiblePlayers.reduce((sum, player) => sum + player.confidence, 0) / visiblePlayers.length * 100) : 0;
+  const visualEvidence = tracking?.quality;
 
   const confirmIdentity = async (trackId: number, playerId: string | null) => {
     if (!localJobId || !tracking || identitySavingTrack !== undefined) return;
@@ -466,7 +470,12 @@ export function App() {
     } else if (/人数|谁在场|球员/.test(prompt)) {
       setAgentReply(`当前帧可见 ${visiblePlayers.length} 名球员，其中球队 A ${visibleTeamA} 人、球队 B ${visibleTeamB} 人；结果来自 ${tracking?.video.processedFps.toFixed(1) ?? "-"} FPS 连续跟踪。`);
     } else if (/稳定|轨迹|跟踪/.test(prompt)) {
-      setAgentReply(`该片段保留 ${playerTracks.length} 条球员轨迹，当前画面平均检测置信度为 ${averageConfidence}%。遮挡或镜头变化可能产生轨迹片段，姓名确认仍需号码 OCR 或人工校验。`);
+      const processed = visualEvidence?.processedFrameCount;
+      const peopleFrames = visualEvidence?.playerVisibleFrameCount;
+      const ballFrames = visualEvidence?.ballVisibleFrameCount;
+      const coverage = processed && peopleFrames !== undefined ? `人物候选出现于 ${peopleFrames} / ${processed} 个处理帧` : "尚无逐帧覆盖计数";
+      const ballCoverage = processed && ballFrames !== undefined ? `；篮球候选出现于 ${ballFrames} / ${processed} 帧` : "";
+      setAgentReply(`该片段保留 ${playerTracks.length} 条球员轨迹，${coverage}${ballCoverage}，采样频率 ${tracking?.video.processedFps.toFixed(1) ?? "-"} FPS。以上是视觉检测覆盖，不是比赛统计或球员身份结论；姓名仍需号码 OCR 或人工校验。`);
     } else if (/洞察|指标|战术|回合/.test(prompt)) {
       const event = activeEvent ?? analysis?.events[0];
       setAgentReply(event ? `${event.title}：${event.explanation} 当前指标为 ${metricDisplay(event.metric)} ${event.metric.label}。` : "当前没有可用的结构化洞察事件。");
@@ -576,7 +585,7 @@ export function App() {
                     {analysis.events.map((event) => <button key={event.id} className={`timeline-marker accent-${event.accent}`} style={{ left: `${Math.min(100, (event.startSeconds / Math.max(videoDuration || tracking?.video.durationSeconds || 1, 1)) * 100)}%` }} onClick={() => seekTo(event)} title={event.title}><span /></button>)}
                   </div>
                 </div>
-                <StatsDashboard snapshot={statsSnapshot} matchResolution={matchResolution} isDemo={statsTimeline?.isDemo} tab={statsTab} onTabChange={setStatsTab} />
+                <StatsDashboard timeline={statsTimeline} snapshot={statsSnapshot} matchResolution={matchResolution} isDemo={statsTimeline?.isDemo} tab={statsTab} onTabChange={setStatsTab} />
                 {frames.length > 0 && <div className="frame-strip"><div className="frame-strip-head"><span><Images size={14} />Agent 读取的关键帧</span><small>{frames.length} 帧</small></div><div>{frames.map((frame, index) => <button key={frame.previewUrl} onClick={() => { if (videoRef.current) videoRef.current.currentTime = frame.atSeconds; }}><img src={frame.previewUrl} alt={`关键帧 ${index + 1}`} /><span>{frame.atSeconds.toFixed(1)}s</span></button>)}</div></div>}
               </section>
 
@@ -584,7 +593,7 @@ export function App() {
                 <CourtRadar frame={radarFrame} trackingTime={trackingTime} period={statsSnapshot?.period} gameClock={statsSnapshot?.clock} dataStatus={radarFrame ? "FRAME SYNC" : tracking ? "NO FRAME" : "WAITING"} eventTitle={activeEvent?.title} />
                 <section className="current-insight" aria-label="当前战术解读">
                   <div className="section-kicker"><Sparkles size={14} />当前解读</div>
-                  {activeEvent ? <><h3>{activeEvent.title}</h3><strong className="insight-metric">{metricDisplay(activeEvent.metric)} <small>{activeEvent.metric.label}</small></strong><p>{activeEvent.explanation}</p><small className="insight-source">依据：{activeEvent.metric.source} · {activeEvent.metric.confidence !== undefined ? `置信度 ${Math.round(activeEvent.metric.confidence * 100)}%` : "结构化事件"}</small></> : <p className="insight-waiting">等待视频进入一个有结构化依据的事件。</p>}
+                  {activeEvent ? <><h3>{activeEvent.title}</h3><strong className="insight-metric">{metricDisplay(activeEvent.metric)} <small>{activeEvent.metric.label}</small></strong><p>{activeEvent.explanation}</p><small className="insight-source">依据：{activeEvent.metric.source} · {activeEvent.evidence.length} 项可追溯依据</small></> : <p className="insight-waiting">等待视频进入一个有结构化依据的事件。</p>}
                 </section>
                 <section className="agent-panel">
                 <div className="agent-title"><span><Bot size={17} />赛场问答</span><i className="local" /><small>基于已加载数据与已生成证据</small></div>
@@ -617,7 +626,7 @@ export function App() {
                 </section>
               </aside>
             </div>
-              <div className="result-footer"><span><BadgeCheck size={16} />红细胞队 · Team28</span><span><Mic2 size={16} />{analysis.narration.length} 条解说提示</span><span><Database size={16} />{analysis.provenance.dataFile}</span>{tracking && <span><Activity size={16} />{tracking.tracks.filter((track) => track.role === "player").length} 条球员轨迹</span>}{tracking?.quality && <span><Gauge size={16} />画面覆盖 {Math.round(tracking.quality.frameCoverage * 100)}% · 篮球 {Math.round(tracking.quality.ballFrameCoverage * 100)}%</span>}{tracking?.roster && <span><Users size={16} />{tracking.roster.playerCount} 人名单已加载</span>}{matchResolution && <span><ShieldCheck size={16} />比赛身份：{matchResolution.status === "confirmed" ? "已确认" : matchResolution.status === "ambiguous" ? "待复核" : "未确认"}</span>}<span><ShieldCheck size={16} />{screen === "showcase" ? "本地展示产物" : tracking ? `本地视觉 · ${tracking.model.device.toUpperCase()}` : "本地验证结果"}</span></div>
+              <div className="result-footer"><span><BadgeCheck size={16} />红细胞队 · Team28</span><span><Mic2 size={16} />{analysis.narration.length} 条解说提示</span><span><Database size={16} />{analysis.provenance.dataFile}</span>{tracking && <span><Activity size={16} />{tracking.tracks.filter((track) => track.role === "player").length} 条球员轨迹</span>}{tracking?.quality && <span><Gauge size={16} />视觉采样：人物 {tracking.quality.playerVisibleFrameCount ?? "—"} / {tracking.quality.processedFrameCount ?? "—"} 帧 · 篮球 {tracking.quality.ballVisibleFrameCount ?? "—"} / {tracking.quality.processedFrameCount ?? "—"} 帧</span>}{tracking?.quality?.identifiedTrackCount !== undefined && <span><BadgeCheck size={16} />名单匹配 {tracking.quality.identifiedTrackCount} 条</span>}{tracking?.roster && <span><Users size={16} />{tracking.roster.playerCount} 人名单已加载</span>}{matchResolution && <span><ShieldCheck size={16} />比赛身份：{matchResolution.status === "confirmed" ? "已确认" : matchResolution.status === "ambiguous" ? "待复核" : "未确认"}</span>}<span><ShieldCheck size={16} />{screen === "showcase" ? "本地展示产物" : tracking ? `本地视觉 · ${tracking.model.device.toUpperCase()}` : "本地验证结果"}</span></div>
           </div>
         )}
       </main>

@@ -5,6 +5,11 @@ export const demoStatsTimeline: GameStatsTimeline = gameStatsTimelineSchema.pars
   gameId: "dal-hou-showcase",
   source: "showcase demo box score",
   isDemo: true,
+  provenance: {
+    sourceType: "demo",
+    publisher: "CourtVision Team28",
+    notes: "Only for interface demonstration."
+  },
   snapshots: [
     {
       atSeconds: 0,

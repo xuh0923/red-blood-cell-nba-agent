@@ -63,7 +63,14 @@ describe("shared contracts", () => {
       version: "1.0",
       video: { width: 1920, height: 1080, durationSeconds: 22, sourceFps: 60, processedFps: 10 },
       model: { name: "yolo11n.pt", device: "cpu", imageSize: 640 },
-      quality: { frameCoverage: 0.94, ballFrameCoverage: 0.4, meanPlayerConfidence: 0.81, trackCount: 10 },
+      quality: {
+        frameCoverage: 0.94,
+        ballFrameCoverage: 0.4,
+        trackCount: 10,
+        processedFrameCount: 220,
+        playerVisibleFrameCount: 207,
+        ballVisibleFrameCount: 88
+      },
       frames: [{
         atSeconds: 1.2,
         players: [{
@@ -90,6 +97,7 @@ describe("shared contracts", () => {
     });
     expect(parsed.frames[0]?.players[0]?.trackId).toBe(7);
     expect(parsed.quality?.trackCount).toBe(10);
+    expect(parsed.quality?.playerVisibleFrameCount).toBe(207);
   });
 
   it("requires a unique jersey number within each team roster", () => {
@@ -127,5 +135,26 @@ describe("shared contracts", () => {
       ...timeline,
       snapshots: [{ ...timeline.snapshots[0], teams: [{ teamCode: "DAL", score: 1, fieldGoals: { made: 3, attempted: 2 } }, timeline.snapshots[0].teams[1]] }]
     }).success).toBe(false);
+  });
+
+  it("keeps official manual provenance separate from visual model evidence", () => {
+    const parsed = gameStatsTimelineSchema.parse({
+      version: "1.0",
+      gameId: "official-game",
+      source: "NBA official box score manually annotated by Team28",
+      provenance: {
+        sourceType: "nba-official-manual",
+        publisher: "NBA Official",
+        sourceUrls: ["https://www.nba.com/game/example"],
+        annotatedBy: "Team28",
+        recordCount: 2
+      },
+      snapshots: [{
+        atSeconds: 0,
+        teams: [{ teamCode: "DAL", score: 101 }, { teamCode: "HOU", score: 105 }]
+      }]
+    });
+    expect(parsed.provenance?.sourceType).toBe("nba-official-manual");
+    expect(parsed.provenance?.recordCount).toBe(2);
   });
 });

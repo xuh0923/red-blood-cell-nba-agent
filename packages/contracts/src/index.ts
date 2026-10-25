@@ -18,6 +18,19 @@ export const metricSchema = z.object({
   confidence: z.number().min(0).max(1).optional()
 });
 
+/** Provenance for deterministic basketball facts; it is never a model prediction. */
+export const dataProvenanceSchema = z.object({
+  sourceType: z.enum(["nba-official-manual", "official-structured", "user-structured", "demo"]),
+  publisher: z.string().min(1).optional(),
+  sourceUrls: z.array(z.string().url()).min(1).optional(),
+  annotatedBy: z.string().min(1).optional(),
+  annotatedAt: z.string().min(1).optional(),
+  verifiedAt: z.string().min(1).optional(),
+  datasetVersion: z.string().min(1).optional(),
+  recordCount: z.number().int().nonnegative().optional(),
+  notes: z.string().min(1).optional()
+});
+
 export const overlayEventSchema = z.object({
   id: z.string().min(1),
   startSeconds: z.number().min(0),
@@ -230,6 +243,7 @@ export const gameStatsTimelineSchema = z.object({
   gameId: z.string().min(1),
   source: z.string().min(1),
   isDemo: z.boolean().default(false),
+  provenance: dataProvenanceSchema.optional(),
   snapshots: z.array(gameStatsSnapshotSchema).min(1),
   matchResolution: matchResolutionSchema.optional()
 }).superRefine((timeline, context) => {
@@ -286,8 +300,12 @@ export const trackingResultSchema = z.object({
   quality: z.object({
     frameCoverage: z.number().min(0).max(1),
     ballFrameCoverage: z.number().min(0).max(1),
-    meanPlayerConfidence: z.number().min(0).max(1),
     trackCount: z.number().int().nonnegative(),
+    processedFrameCount: z.number().int().positive().optional(),
+    playerVisibleFrameCount: z.number().int().nonnegative().optional(),
+    ballVisibleFrameCount: z.number().int().nonnegative().optional(),
+    identifiedTrackCount: z.number().int().nonnegative().optional(),
+    ocrIdentityCount: z.number().int().nonnegative().optional(),
     idSwitches: z.number().int().nonnegative().optional()
   }).optional(),
   videoEvidence: z.array(matchEvidenceSchema).default([]),
@@ -472,6 +490,7 @@ export const storageCatalogResponseSchema = z.object({
 });
 
 export type Metric = z.infer<typeof metricSchema>;
+export type DataProvenance = z.infer<typeof dataProvenanceSchema>;
 export type OverlayEvent = z.infer<typeof overlayEventSchema>;
 export type NarrationCue = z.infer<typeof narrationCueSchema>;
 export type Analysis = z.infer<typeof analysisSchema>;
