@@ -61,12 +61,14 @@ npm run test:e2e
 ## 目录
 
 ```text
-apps/web             React 操作台、作品展示和本地工作流
-packages/contracts   跨前端、视觉和分析器共享的数据契约
-services/vision      Python 本地检测、跟踪、OCR 和任务服务
-services/agent       确定性本地规则分析器
+apps/web             React 操作台、作品展示和浏览器工作流
+packages/contracts   跨应用共享的 Zod 数据契约
+services/vision      Python 本地检测、跟踪、OCR 和任务 API
+services/agent       TypeScript 确定性分析器
 services/renderer    ffmpeg 可视化脚本生成器
-docs                 架构、数据格式和开发记录
+scripts              本地服务启动与展示产物准备脚本
+tests/e2e            Playwright 端到端测试
+docs                 当前架构、操作指南、数据规范与历史资料
 ```
 
 ## 协作约束
@@ -79,4 +81,4 @@ docs                 架构、数据格式和开发记录
 - 改动后按影响范围运行 `npm run typecheck`、`npm test`、`npm run build` 和相关端到端测试。
 - 提交信息统一使用：`git commit -m "【问题】问题描述【修改】修改内容"`。
 
-详细架构见 [docs/architecture.md](docs/architecture.md)，名单格式见 [docs/roster-database-format.md](docs/roster-database-format.md)。
+详细架构见 [docs/architecture.md](docs/architecture.md)，名单格式见 [docs/roster-database-format.md](docs/roster-database-format.md)。文档用途和维护状态见 [文档索引](docs/README.md)。

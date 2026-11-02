@@ -1,5 +1,7 @@
 # 开发记录
 
+本文按时间保留项目实现记录。较早条目描述过的 AWS、AgentCore 和云端工作流已从当前版本移除；请以[当前架构](architecture.md)和[文档索引](README.md)为准。
+
 ## 2026-10-10：回退为纯本地运行版本
 
 - 根据当前阶段需求，移除 AWS SDK、CDK、AgentCore、S3、DynamoDB、API Gateway、Step Functions 和云端轮询工作流。

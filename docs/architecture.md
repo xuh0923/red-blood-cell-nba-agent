@@ -25,7 +25,7 @@
 
 - `apps/web`：React 操作台、视频播放、跟踪叠加、球场雷达、统计、问答和身份确认。
 - `services/vision`：FastAPI 本地任务服务，执行 YOLO 检测、BoT-SORT 跟踪、球衣特征、可选 OCR 和结果持久化。
-- `services/agent`：无网络的确定性分析器，只读取用户上传的结构化资料，不推断缺失指标。
+- `services/agent`：无网络的确定性分析器包。目前 Web 上传流程在 `apps/web/src/demo-workflow.ts` 内执行资料解析和分析映射；两处逻辑尚未统一，见[改进路线](optimization-plan.md)。
 - `packages/contracts`：跨模块共享的 Zod 契约和类型。
 - `services/renderer`：生成安全的 ffmpeg 可视化脚本参数。
 - `docs`：架构、数据格式和变更记录。
